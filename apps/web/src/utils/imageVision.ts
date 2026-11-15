@@ -333,7 +333,10 @@ export function analyzeImageTerrainReal(
   // Transformada de Hough Circular (HoughCircles) en navegador.
   // Solo se usa para imágenes subidas por el usuario; para el mosaico por defecto
   // se usan los cráteres verificados de opencv_craters.json (sin falsos positivos).
-  const minR = 2;
+  // minR subía desde 2px: a esa escala, en una foto real con textura/ruido
+  // (a diferencia de la imagen estática original), casi cualquier gradiente local
+  // "vota" como círculo, de ahí los cráteres marcados sobre terreno liso.
+  const minR = 3;
   const maxR = 7;
   const detectedObstacles: DetectedTerrainObstacle[] = [];
 
@@ -356,7 +359,10 @@ export function analyzeImageTerrainReal(
       }
     }
 
-    const voteThreshold = Math.max(6, Math.round(rad * 2.0));
+    // Umbral más estricto (antes rad*2.0 con mínimo 6): sobre una foto real con
+    // más detalle de textura, ese umbral dejaba pasar bordes de rocas/sombras
+    // sueltas como si fueran cráteres.
+    const voteThreshold = Math.max(9, Math.round(rad * 3.2));
     for (let cy = rad + 2; cy < rows - rad - 2; cy += 2) {
       for (let cx = rad + 2; cx < cols - rad - 2; cx += 2) {
         const votes = acc[cy][cx];
@@ -527,7 +533,7 @@ export function analyzeImageTerrainReal(
   // PASO 3: ELEVACIÓN MOLA / HiRISE DEM (-1800m a -1600m) Y PENDIENTE HORN 3x3
   // ============================================================================
   const smoothEdges = gaussianSmooth(gradMag, 2, 2);
-  const localReliefGrid: number[][] = [];
+  let localReliefGrid: number[][] = [];
   const allRelief: number[] = [];
   const allEdge: number[] = [];
 
@@ -535,15 +541,25 @@ export function analyzeImageTerrainReal(
     const rowVals: number[] = [];
     for (let c = 0; c <= cols; c++) {
       // Gradiente regional MOLA (de -1795m en la cuenca norte/central a -1605m en las tierras altas)
-      // combinado con micro-relieve estereofotoclinométrico tipo HiRISE
+      // combinado con micro-relieve estereofotoclinométrico tipo HiRISE. El factor de detalle baja
+      // de 1.65 a 0.55: sobre una foto real (más textura que la imagen estática original) ese
+      // realce amplificaba cada mota de ruido, y las curvas de nivel salían como manchas sueltas
+      // en vez de líneas. Después se suaviza una vez más antes de normalizar, por la misma razón.
       const regionalMola = (1 - r / rows) * 0.25 + (c / cols) * 0.18;
-      const hiRiseDetail = (smoothLum[r][c] - backgroundTint[r][c]) * 1.65 + smoothLum[r][c] * 0.42;
+      const hiRiseDetail = (smoothLum[r][c] - backgroundTint[r][c]) * 0.55 + smoothLum[r][c] * 0.42;
       const rel = regionalMola + hiRiseDetail;
       rowVals.push(rel);
-      allRelief.push(rel);
-      allEdge.push(smoothEdges[r][c]);
     }
     localReliefGrid.push(rowVals);
+  }
+
+  localReliefGrid = gaussianSmooth(localReliefGrid, 2, 3);
+
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      allRelief.push(localReliefGrid[r][c]);
+      allEdge.push(smoothEdges[r][c]);
+    }
   }
 
   allRelief.sort((a, b) => a - b);
@@ -575,7 +591,9 @@ export function analyzeImageTerrainReal(
     molaElevationGrid.push(molaRow);
   }
 
-  const clusteredObstacles = clusterObstacles(detectedObstacles, 0.52);
+  // Separación mínima más generosa (antes 0.52) para fusionar detecciones Hough
+  // repetidas/débiles del mismo rasgo en una sola marca, en vez de varias juntas.
+  const clusteredObstacles = clusterObstacles(detectedObstacles, 0.95);
 
   // ============================================================================
   // PASO 4: CLASIFICACIÓN AI4MARS (U-Net / SegFormer: Soil, Bedrock, Sand, Big Rock)

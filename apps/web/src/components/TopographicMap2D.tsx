@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, Radio, RefreshCw, Server, Settings, Upload } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Crosshair, Layers, Mountain, Radio, RefreshCw, Server, Settings, Upload } from 'lucide-react';
 import {
   DroneData,
   EvaData,
@@ -216,7 +216,7 @@ const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = 
 
       {/* Curva rellena de elevación */}
       <path d={areaPath} fill="url(#elevFillSketch)" stroke="none" />
-      <path d={linePath} fill="none" stroke="#7dd3fc" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={linePath} fill="none" stroke="#38bdf8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
 
       {/* Línea punteada vertical desde la curva hasta la base: Posición Actual (EVA-01) */}
       <line
@@ -315,41 +315,27 @@ const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = 
 const MONO_READOUT_FONT =
   '"JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, monospace';
 
-const ClinicalEcgTrace: React.FC<{ isElevated?: boolean; bpm?: number }> = ({
+const ClinicalEcgTrace: React.FC<{ isElevated?: boolean; bpm?: number; live?: boolean }> = ({
   isElevated = false,
   bpm = 75,
+  live = true,
 }) => {
   const strokeColor = isElevated ? '#e5a024' : '#6ca696';
   const clampedBpm = Math.max(40, Math.min(180, bpm));
-  // Dos complejos P-QRS-T por barrido completo, sincronizados con los BPM reales
-  const sweepDurationSec = Number(((60 / clampedBpm) * 2).toFixed(2));
+  // Dos complejos P-QRS-T por trazo completo, sincronizados con los BPM reales
+  const traceDurationSec = Number(((60 / clampedBpm) * 2).toFixed(2));
   const wavePath =
     'M 0,14 L 10,14 L 13,11.8 L 16,14 L 21,14 L 23.5,17.2 L 27,3.2 L 30.5,18.2 L 33.5,10.5 L 37,14 L 54,14 L 64,14 L 67,11.8 L 70,14 L 75,14 L 77.5,17.2 L 81,3.2 L 84.5,18.2 L 87.5,10.5 L 91,14 L 108,14';
 
   return (
-    <div
-      style={{
-        position: 'relative',
-        width: '100%',
-        height: '20px',
-        overflow: 'hidden',
-      }}
-    >
+    <div style={{ width: '100%', height: '20px' }}>
       <style>{`
-        @keyframes ecgTraceSweep {
+        @keyframes ecgTraceDraw {
           0% {
-            stroke-dashoffset: 160;
+            stroke-dashoffset: 200;
           }
-          100% {
+          80%, 100% {
             stroke-dashoffset: 0;
-          }
-        }
-        @keyframes ecgScrollLoop {
-          0% {
-            transform: translateX(0);
-          }
-          100% {
-            transform: translateX(-50%);
           }
         }
         @keyframes plssHeartPulse {
@@ -374,76 +360,40 @@ const ClinicalEcgTrace: React.FC<{ isElevated?: boolean; bpm?: number }> = ({
             stroke: #7d899b;
           }
         }
+        /* Respeta la preferencia de movimiento reducido */
+        @media (prefers-reduced-motion: reduce) {
+          .ecg-trace-path {
+            animation: none !important;
+          }
+        }
       `}</style>
 
-      {/* Trazo continuo de latidos desplazándose al ritmo del pulso con desvanecimiento lateral */}
-      <div
-        style={{
-          display: 'flex',
-          width: '200%',
-          height: '20px',
-          animation: `ecgScrollLoop ${sweepDurationSec}s linear infinite`,
-          WebkitMaskImage:
-            'linear-gradient(90deg, transparent 0%, #000 10%, #000 88%, transparent 100%)',
-          maskImage:
-            'linear-gradient(90deg, transparent 0%, #000 10%, #000 88%, transparent 100%)',
-        }}
+      {/* Trazo ECG que se dibuja de nuevo en cada latido, sincronizado con los BPM reales */}
+      <svg
+        viewBox="0 0 108 20"
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: '20px', display: 'block' }}
+        aria-label="Onda ECG sintética"
       >
-        <svg
-          viewBox="0 0 108 20"
-          preserveAspectRatio="none"
-          style={{ width: '50%', height: '20px', display: 'block', flexShrink: 0, overflow: 'visible' }}
-        >
-          <path
-            d={wavePath}
-            fill="none"
-            stroke={strokeColor}
-            strokeOpacity="0.22"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d={wavePath}
-            fill="none"
-            stroke={strokeColor}
-            strokeWidth="1.45"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray="52 28"
-            style={{
-              animation: `ecgTraceSweep ${sweepDurationSec}s linear infinite`,
-            }}
-          />
-        </svg>
-        <svg
-          viewBox="0 0 108 20"
-          preserveAspectRatio="none"
-          style={{ width: '50%', height: '20px', display: 'block', flexShrink: 0, overflow: 'visible' }}
-        >
-          <path
-            d={wavePath}
-            fill="none"
-            stroke={strokeColor}
-            strokeOpacity="0.22"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d={wavePath}
-            fill="none"
-            stroke={strokeColor}
-            strokeWidth="1.45"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray="52 28"
-            style={{
-              animation: `ecgTraceSweep ${sweepDurationSec}s linear infinite`,
-            }}
-          />
-        </svg>
-      </div>
+        <path
+          className="ecg-trace-path"
+          d={wavePath}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.45"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray="200"
+          style={{
+            animationName: 'ecgTraceDraw',
+            animationDuration: `${traceDurationSec}s`,
+            animationTimingFunction: 'linear',
+            animationIterationCount: 'infinite',
+            animationPlayState: live ? 'running' : 'paused',
+            opacity: live ? 1 : 0.4,
+          }}
+        />
+      </svg>
     </div>
   );
 };
@@ -550,8 +500,8 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
           display: 'inline-flex',
           alignItems: 'center',
           gap: '7px',
-          background: 'rgba(10, 20, 34, 0.92)',
-          border: '1px solid #1e3450',
+          background: 'rgba(8, 10, 15, 0.92)',
+          border: '1px solid #262830',
           borderRadius: '5px',
           color: '#f1f5f9',
           fontSize: '11.5px',
@@ -585,8 +535,8 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
         aria-label="Simbología del mapa"
         style={{
           width: '248px',
-          background: 'rgba(10, 20, 34, 0.96)',
-          border: '1px solid #1e3450',
+          background: 'rgba(8, 10, 15, 0.96)',
+          border: '1px solid #262830',
           borderRadius: '6px',
           overflow: 'hidden',
           boxShadow: '0 10px 28px rgba(2, 6, 14, 0.72)',
@@ -598,8 +548,8 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
             justifyContent: 'space-between',
             alignItems: 'center',
             padding: '8px 12px',
-            background: '#0d192b',
-            borderBottom: '1px solid #182940',
+            background: '#0c0e13',
+            borderBottom: '1px solid #23252b',
           }}
         >
           <span style={{ fontSize: '12px', fontWeight: 600, color: '#f1f5f9' }}>
@@ -631,20 +581,13 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
               <svg viewBox="0 0 28 18" width="26" height="17" fill="none">
                 <path
                   d="M3 13.5 C9 13.5, 11 4.5, 22 4.5"
-                  stroke="rgba(52, 211, 153, 0.22)"
-                  strokeWidth="6.5"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M3 13.5 C9 13.5, 11 4.5, 22 4.5"
-                  stroke="#4ade80"
+                  stroke="#38bdf8"
                   strokeWidth="1.8"
-                  strokeDasharray="3,2.5"
                   strokeLinecap="round"
                 />
                 <polyline
                   points="19.5,2.2 23.5,4.5 19.5,6.8"
-                  stroke="#4ade80"
+                  stroke="#38bdf8"
                   strokeWidth="1.6"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -670,8 +613,8 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
                 <line x1="11" y1="18.4" x2="11" y2="20.8" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
                 <line x1="1.2" y1="11" x2="3.6" y2="11" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
                 <line x1="18.4" y1="11" x2="20.8" y2="11" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
-                <circle cx="11" cy="11" r="5" fill="#0b192c" stroke="#38bdf8" strokeWidth="1.8" />
-                <circle cx="11" cy="11" r="2" fill="#38bdf8" />
+                <circle cx="11" cy="11" r="5" fill="#38bdf8" stroke="#0b192c" strokeWidth="1.8" />
+                <circle cx="11" cy="11" r="2" fill="#0b192c" />
               </svg>
             }
           />
@@ -852,8 +795,13 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const [localMapState, setLocalMapState] = useState<RealMapStatePayload | null>(null);
   const [openCvPayload, setOpenCvPayload] = useState<OpenCvPrecomputedPayload | null>(null);
 
-  const showContours = mapLayerMode === 'topo_lines';
-  const [showDetectedZones] = useState<boolean>(true);
+  // Capas del mapa (panel "CAPAS DEL MAPA"): cada una se puede prender/apagar por
+  // separado, en vez del único botón de "Ojo" que las mezclaba todas antes.
+  const [showCraters, setShowCraters] = useState<boolean>(true);
+  const [showEscarpments, setShowEscarpments] = useState<boolean>(true);
+  const [showContourLines, setShowContourLines] = useState<boolean>(true);
+  const [showMetricGrid, setShowMetricGrid] = useState<boolean>(true);
+  const [showLayersPanel, setShowLayersPanel] = useState<boolean>(false);
   const showD415GridOverlay = false;
   const showServerPaths = false;
 
@@ -900,6 +848,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       return Math.min(MAX_SPAN_KM, Math.max(MIN_SPAN_KM, next));
     });
   };
+
+  const resetZoom = () => setCurrentSpanKm(DEFAULT_SPAN_KM);
 
   // Sólo recarga tiles reales cuando el zoom cruza a un escalón de detalle distinto
   // (TIERS_KM); entre medio, el zoom se ve recortando/escalando el mismo mosaico ya
@@ -1190,8 +1140,10 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       loadedImg: loadedImgRef.current,
       liveImg: liveImgRef.current,
       mapLayerMode,
-      showContours,
-      showDetectedZones,
+      showCraters,
+      showEscarpments,
+      showContourLines,
+      showMetricGrid,
       showD415GridOverlay,
       showServerPaths,
       safeRoute,
@@ -1209,8 +1161,10 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     activeMapState,
     droneData,
     mapLayerMode,
-    showContours,
-    showDetectedZones,
+    showCraters,
+    showEscarpments,
+    showContourLines,
+    showMetricGrid,
     showD415GridOverlay,
     showServerPaths,
     evaYaw,
@@ -1330,65 +1284,60 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     setHoverCoords({ lat, lon });
   };
 
-  // Registros tácticos de Obstáculos y Pendientes derivados de los datos reales de terreno y ruta
-  const riskCards = useMemo(() => {
-    const highReason = risk.reasons.find((r) => /CRÍTIC|BLOQUEADA|INSEGURA|EXTREMA/i.test(r));
-    const medReason = risk.reasons.find((r) => !/CRÍTIC|BLOQUEADA|INSEGURA|EXTREMA/i.test(r));
-
-    const liveSlope = maxRouteSlopeDeg > 0 ? maxRouteSlopeDeg : droneData?.max_slope_deg ?? 28.4;
-    const obsCount = droneData?.obstacles?.length ?? 0;
-    const firstObsDist =
-      obsCount > 0 && droneData?.obstacles?.[0]?.distance_m != null
-        ? droneData.obstacles[0].distance_m
-        : 0.65;
-
-    return [
-      {
-        level: 'red' as const,
-        severityLabel: 'Crítico',
-        accent: '#e5484d',
-        badgeBg: 'rgba(229, 72, 77, 0.12)',
-        badgeBorder: 'rgba(229, 72, 77, 0.38)',
-        badgeText: '#f87171',
-        title: 'Pendiente pronunciada en sector',
-        metric: `${liveSlope.toFixed(1)}°`,
-        meta: 'Umbral máx. 25.0°',
-        action: highReason
-          ? highReason.charAt(0).toUpperCase() + highReason.slice(1).toLowerCase()
-          : 'Bordear cresta por el flanco oeste',
-      },
-      {
-        level: 'yellow' as const,
-        severityLabel: 'Precaución',
-        accent: '#e5a024',
-        badgeBg: 'rgba(229, 160, 36, 0.12)',
-        badgeBorder: 'rgba(229, 160, 36, 0.38)',
-        badgeText: '#fbbf24',
-        title: obsCount > 0 ? `Terreno irregular (${obsCount} ptos)` : 'Regolito suelto y depresiones',
-        metric: `${firstObsDist.toFixed(2)} m`,
-        meta: 'Radio de escaneo D415',
-        action: medReason
-          ? medReason.charAt(0).toUpperCase() + medReason.slice(1).toLowerCase()
-          : 'Reducir ritmo de marcha y mantener margen',
-      },
-      {
-        level: 'green' as const,
-        severityLabel: 'Despejado',
-        accent: '#2fb380',
-        badgeBg: 'rgba(47, 179, 128, 0.12)',
-        badgeBorder: 'rgba(47, 179, 128, 0.35)',
-        badgeText: '#6ee7b7',
-        title: 'Corredor de retorno al refugio',
-        metric: safeRoute.distanceMeters > 0 ? `${safeRoute.distanceMeters.toFixed(1)} m` : '9.2°',
-        meta: safeRoute.distanceMeters > 0 ? 'Distancia por ruta' : 'Pendiente media estable',
-        action: 'Superficie firme; mantener rumbo trazado',
-      },
-    ];
-  }, [risk, maxRouteSlopeDeg, droneData?.max_slope_deg, droneData?.obstacles, safeRoute.distanceMeters]);
-
-  const cycleMapLayerMode = () => {
-    setMapLayerMode(mapLayerMode === 'topo_lines' ? 'fusion_mars_d415' : 'topo_lines');
+  // Registros tácticos de Obstáculos y Pendientes: uno por cada hallazgo real
+  // (visionData.detectedObstacles) más un renglón de pendiente general de la ruta —
+  // nada fabricado, cada tarjeta corresponde a un dato que el frontend ya tiene.
+  const KIND_TITLE: Record<string, string> = {
+    crater_wall: 'Cráter segmentado',
+    steep_cliff: 'Escarpe pronunciado',
+    rock_obstacle: 'Roca / obstáculo',
+    sand_trap: 'Terreno irregular',
   };
+  const levelForSlope = (slope: number): 'red' | 'yellow' | 'green' =>
+    slope >= 30 ? 'red' : slope >= 15 ? 'yellow' : 'green';
+  const LEVEL_META = {
+    red: { severityLabel: 'Crítico', accent: '#e5484d', badgeBg: 'rgba(229, 72, 77, 0.12)', badgeBorder: 'rgba(229, 72, 77, 0.38)', badgeText: '#f87171' },
+    yellow: { severityLabel: 'Precaución', accent: '#e5a024', badgeBg: 'rgba(229, 160, 36, 0.12)', badgeBorder: 'rgba(229, 160, 36, 0.38)', badgeText: '#fbbf24' },
+    green: { severityLabel: 'Despejado', accent: '#2fb380', badgeBg: 'rgba(47, 179, 128, 0.12)', badgeBorder: 'rgba(47, 179, 128, 0.35)', badgeText: '#6ee7b7' },
+  } as const;
+
+  const riskCards = useMemo(() => {
+    const overallLevel = levelForSlope(maxRouteSlopeDeg);
+    const overall = {
+      level: overallLevel,
+      ...LEVEL_META[overallLevel],
+      title: 'Pendiente de terreno',
+      metric: `${maxRouteSlopeDeg.toFixed(1)}°`,
+      source: 'Elevación sintética',
+      value: '0.00 m',
+    };
+
+    const obstacleCards = (visionData?.detectedObstacles ?? []).map((obs) => {
+      const level = levelForSlope(obs.slopeDeg);
+      return {
+        level,
+        ...LEVEL_META[level],
+        title: KIND_TITLE[obs.kind] ?? 'Obstáculo detectado',
+        metric: `${obs.slopeDeg.toFixed(1)}°`,
+        source: obs.detector ?? 'Sin clasificar',
+        value: `${obs.radius.toFixed(2)} m`,
+      };
+    });
+
+    return [overall, ...obstacleCards].sort(
+      (a, b) => parseFloat(b.metric) - parseFloat(a.metric)
+    );
+  }, [visionData?.detectedObstacles, maxRouteSlopeDeg]);
+
+  // Sólo se listan los hallazgos que de verdad son una alerta (crítico/precaución),
+  // igual que en la referencia — el terreno despejado no genera tarjeta.
+  const alertCards = riskCards.filter((c) => c.level !== 'green');
+  const criticalCount = alertCards.filter((c) => c.level === 'red').length;
+  const cautionCount = alertCards.filter((c) => c.level === 'yellow').length;
+  const detectorList = Array.from(
+    new Set((visionData?.detectedObstacles ?? []).map((o) => o.detector).filter(Boolean))
+  ).join(' · ');
+
 
   // Valores de telemetría del traje (usa datos reales si están presentes, o los valores de referencia)
   const o2Level = eva ? eva.suit_o2 : 87.0;
@@ -1981,7 +1930,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
             minWidth: '320px',
             display: 'flex',
             flexDirection: 'column',
-            background: '#0b0e15',
+            background: '#080a0f',
             border: '1px solid #161e2c',
             borderRadius: '8px',
             overflow: 'hidden',
@@ -2020,49 +1969,10 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                 Cartografía de superficie
               </span>
             </div>
-
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '14px',
-                fontFamily: MONO_READOUT_FONT,
-                fontSize: '9px',
-                color: '#7d899b',
-                letterSpacing: '0.08em',
-              }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ width: '10px', height: '1.5px', background: '#38bdf8', display: 'inline-block' }} />
-                RUTA A*
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                <span
-                  style={{
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    border: '1.3px solid #f87171',
-                    display: 'inline-block',
-                  }}
-                />
-                CRÁTER
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                <span
-                  style={{
-                    width: '10px',
-                    borderTop: '1.5px dashed #f59e0b',
-                    display: 'inline-block',
-                  }}
-                />
-                ESCARPE
-              </span>
-            </div>
           </div>
 
           {/* Área central del Mapa */}
-          <div style={{ position: 'relative', flex: 1, background: '#07101d' }}>
+          <div style={{ position: 'relative', flex: 1, background: '#080a0f' }}>
             {/* Leyenda plegable (arriba a la izquierda) */}
             <MapLegend open={showLegend} onToggle={() => setShowLegend(!showLegend)} />
 
@@ -2117,97 +2027,6 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               </div>
             )}
 
-            {/* Selector Táctico de Capas: Orbital vs Route Map vs RGB vs Grid */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '12px',
-                right: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                background: 'rgba(9, 17, 30, 0.92)',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                borderRadius: '6px',
-                padding: '3px 6px',
-                zIndex: 9,
-                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
-                backdropFilter: 'blur(4px)',
-                fontSize: '10px',
-                fontFamily: '"SF Mono", "JetBrains Mono", Consolas, monospace',
-              }}
-            >
-              <span style={{ color: '#64748b', marginRight: '4px', fontWeight: 600 }}>FONDO:</span>
-              <button
-                onClick={() => setMapLayerMode('fusion_mars_d415')}
-                style={{
-                  background: mapLayerMode === 'fusion_mars_d415' ? '#0284c7' : 'transparent',
-                  border: 'none',
-                  color: mapLayerMode === 'fusion_mars_d415' ? '#ffffff' : '#94a3b8',
-                  borderRadius: '4px',
-                  padding: '3px 8px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                ORBITAL
-              </button>
-              <button
-                onClick={() => setMapLayerMode('live_route_map')}
-                style={{
-                  background: mapLayerMode === 'live_route_map' ? '#0284c7' : 'transparent',
-                  border: 'none',
-                  color: mapLayerMode === 'live_route_map' ? '#ffffff' : '#94a3b8',
-                  borderRadius: '4px',
-                  padding: '3px 8px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                {droneData?.images?.route_map && (
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                )}
-                ROUTE MAP (VIVO)
-              </button>
-              <button
-                onClick={() => setMapLayerMode('live_rgb')}
-                style={{
-                  background: mapLayerMode === 'live_rgb' ? '#0284c7' : 'transparent',
-                  border: 'none',
-                  color: mapLayerMode === 'live_rgb' ? '#ffffff' : '#94a3b8',
-                  borderRadius: '4px',
-                  padding: '3px 8px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                {droneData?.images?.rgb && (
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                )}
-                RGB D415 (VIVO)
-              </button>
-              <button
-                onClick={() => setMapLayerMode('pure_d415_grid')}
-                style={{
-                  background: mapLayerMode === 'pure_d415_grid' ? '#0284c7' : 'transparent',
-                  border: 'none',
-                  color: mapLayerMode === 'pure_d415_grid' ? '#ffffff' : '#94a3b8',
-                  borderRadius: '4px',
-                  padding: '3px 8px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                GRID D415
-              </button>
-            </div>
-
             <canvas
               ref={canvasRef}
               width={920}
@@ -2245,7 +2064,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                   gap: '6px',
                 }}
               >
-                <span style={{ fontSize: '11px', fontWeight: 700, color: '#7dd3fc', letterSpacing: '0.3px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.3px' }}>
                   NUEVA PARADA CIENTÍFICA
                 </span>
                 <input
@@ -2361,7 +2180,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#7dd3fc' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8' }}>
                     #{selectedStop.number} · {selectedStop.name}
                   </span>
                   <button
@@ -2393,74 +2212,92 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               </div>
             )}
 
-            {/* Control de zoom real (abajo a la izquierda): niveles REGIÓN/EVA/DRON + +/- */}
+            {/* Control de zoom (derecha, vertical): acercar/alejar/centrar, como en la referencia */}
             <div
               style={{
                 position: 'absolute',
-                left: '14px',
-                bottom: '58px',
+                right: '14px',
+                top: '50%',
+                transform: 'translateY(-50%)',
                 zIndex: 6,
                 display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
+                flexDirection: 'column',
+                background: 'rgba(10, 18, 30, 0.85)',
+                border: '1px solid rgba(148, 163, 184, 0.35)',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
               }}
             >
-              <div
+              <button
+                onClick={() => changeZoom(1)}
+                disabled={currentSpanKm <= MIN_SPAN_KM}
+                title="Acercar"
                 style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  background: 'rgba(10, 18, 30, 0.85)',
-                  border: '1px solid rgba(148, 163, 184, 0.35)',
-                  borderRadius: '6px',
-                  overflow: 'hidden',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(148, 163, 184, 0.25)',
+                  color: '#e2e8f0',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  padding: '9px 11px',
+                  cursor: currentSpanKm <= MIN_SPAN_KM ? 'default' : 'pointer',
+                  opacity: currentSpanKm <= MIN_SPAN_KM ? 0.35 : 1,
                 }}
               >
-                <button
-                  onClick={() => changeZoom(1)}
-                  disabled={currentSpanKm <= MIN_SPAN_KM}
-                  title="Acercar"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    borderBottom: '1px solid rgba(148, 163, 184, 0.25)',
-                    color: '#e2e8f0',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    cursor: currentSpanKm <= MIN_SPAN_KM ? 'default' : 'pointer',
-                    opacity: currentSpanKm <= MIN_SPAN_KM ? 0.35 : 1,
-                  }}
-                >
-                  +
-                </button>
-                <button
-                  onClick={() => changeZoom(-1)}
-                  disabled={currentSpanKm >= MAX_SPAN_KM}
-                  title="Alejar"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#e2e8f0',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    cursor: currentSpanKm >= MAX_SPAN_KM ? 'default' : 'pointer',
-                    opacity: currentSpanKm >= MAX_SPAN_KM ? 0.35 : 1,
-                  }}
-                >
-                  −
-                </button>
-              </div>
-              {zoomTilesLoading && (
-                <span style={{ fontSize: '9px', color: '#7dd3fc' }}>Cargando tiles…</span>
-              )}
-              {!zoomTilesLoading && zoomTilesFailed && (
-                <span style={{ fontSize: '9px', color: '#fbbf24' }} title="Sin internet o Mars Trek no respondió: usando imagen de respaldo">
-                  Sin tiles reales (respaldo)
-                </span>
-              )}
+                +
+              </button>
+              <button
+                onClick={() => changeZoom(-1)}
+                disabled={currentSpanKm >= MAX_SPAN_KM}
+                title="Alejar"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(148, 163, 184, 0.25)',
+                  color: '#e2e8f0',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  padding: '9px 11px',
+                  cursor: currentSpanKm >= MAX_SPAN_KM ? 'default' : 'pointer',
+                  opacity: currentSpanKm >= MAX_SPAN_KM ? 0.35 : 1,
+                }}
+              >
+                −
+              </button>
+              <button
+                onClick={resetZoom}
+                title="Centrar / restablecer zoom"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#38bdf8',
+                  padding: '9px 11px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Crosshair size={14} />
+              </button>
             </div>
+
+            {(zoomTilesLoading || zoomTilesFailed) && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '14px',
+                  bottom: '58px',
+                  zIndex: 6,
+                  fontSize: '9px',
+                  color: zoomTilesLoading ? '#38bdf8' : '#fbbf24',
+                }}
+                title={zoomTilesFailed ? 'Sin internet o Mars Trek no respondió: usando imagen de respaldo' : undefined}
+              >
+                {zoomTilesLoading ? 'Cargando tiles…' : 'Sin tiles reales (respaldo)'}
+              </div>
+            )}
 
             {/* Botón inferior izquierdo: Astronauta (abre/cierra Telemetría del traje EVA-01) */}
             <button
@@ -2500,30 +2337,132 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               />
             </button>
 
-            {/* Botón del Ojo (arriba del recuadro de escala y coordenadas en la esquina inferior derecha) */}
-            <button
-              onClick={cycleMapLayerMode}
-              title="Alternar curvas topográficas"
-              style={{
-                position: 'absolute',
-                right: '14px',
-                bottom: '54px',
-                width: '34px',
-                height: '34px',
-                borderRadius: '50%',
-                background: mapLayerMode === 'topo_lines' ? '#0284c7' : 'rgba(10, 22, 38, 0.88)',
-                border: '1.5px solid rgba(226, 232, 240, 0.7)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
-                zIndex: 5,
-                padding: 0,
-              }}
-            >
-              <Eye size={17} color="#f8fafc" />
-            </button>
+            {/* Panel "CAPAS DEL MAPA" (arriba a la derecha): prende/apaga cada capa por separado */}
+            <div style={{ position: 'absolute', top: '12px', right: '14px', zIndex: 9 }}>
+              <button
+                onClick={() => setShowLayersPanel(!showLayersPanel)}
+                title="Capas del mapa"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'rgba(8, 10, 15, 0.92)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  borderRadius: '6px',
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
+                  color: '#e2e8f0',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                }}
+              >
+                <Layers size={14} color="#38bdf8" />
+                CAPAS DEL MAPA
+                <span style={{ fontSize: '9px', color: '#64748b' }}>{showLayersPanel ? '▲' : '▼'}</span>
+              </button>
+
+              {showLayersPanel && (
+                <div
+                  style={{
+                    marginTop: '6px',
+                    width: '220px',
+                    background: 'rgba(8, 10, 15, 0.96)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}
+                >
+                  {[
+                    {
+                      label: 'Cráteres detectados',
+                      count: visionData?.detectedObstacles.filter((o) => o.detector === 'HoughCircles').length ?? 0,
+                      checked: showCraters,
+                      onChange: setShowCraters,
+                    },
+                    {
+                      label: 'Escarpes geológicos',
+                      count: visionData?.escarpmentSegments?.length ?? 0,
+                      checked: showEscarpments,
+                      onChange: setShowEscarpments,
+                    },
+                    {
+                      label: 'Curvas de nivel',
+                      count: null,
+                      checked: showContourLines,
+                      onChange: setShowContourLines,
+                    },
+                    {
+                      label: 'Cuadrícula métrica',
+                      count: null,
+                      checked: showMetricGrid,
+                      onChange: setShowMetricGrid,
+                    },
+                  ].map((row) => (
+                    <label
+                      key={row.label}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        fontSize: '11.5px',
+                        color: '#e2e8f0',
+                      }}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Casilla propia en azul sólido: el checkbox nativo + accentColor se
+                            renderiza gris/oscuro en varios navegadores, no el azul que se pide. */}
+                        <span style={{ position: 'relative', display: 'inline-flex', width: '15px', height: '15px', flexShrink: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={row.checked}
+                            onChange={(e) => row.onChange(e.target.checked)}
+                            style={{ position: 'absolute', inset: 0, opacity: 0, margin: 0, cursor: 'pointer' }}
+                          />
+                          <span
+                            style={{
+                              width: '15px',
+                              height: '15px',
+                              borderRadius: '3px',
+                              border: `1px solid ${row.checked ? '#38bdf8' : '#475569'}`,
+                              background: row.checked ? '#38bdf8' : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            {row.checked && (
+                              <svg viewBox="0 0 12 10" width="9" height="7" fill="none">
+                                <path
+                                  d="M1 5L4.5 8.5L11 1"
+                                  stroke="#0a0f1a"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            )}
+                          </span>
+                        </span>
+                        {row.label}
+                      </span>
+                      {row.count !== null && (
+                        <span style={{ fontSize: '10px', color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+                          {String(row.count).padStart(2, '0')}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Recuadro inferior derecho de Escala + Lat/Lon (como en el boceto) */}
             <div
@@ -2560,6 +2499,17 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               </div>
               <div style={{ fontSize: '9.5px', color: '#cbd5e1', fontVariantNumeric: 'tabular-nums' }}>
                 Lat: {hoverCoords.lat} &nbsp;Lon: {hoverCoords.lon}
+              </div>
+              <div
+                style={{
+                  fontSize: '8.5px',
+                  color: '#64748b',
+                  marginTop: '2px',
+                  letterSpacing: '0.4px',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                ESCALA TÁCTICA · {zoomScale.toFixed(2)}x
               </div>
             </div>
 
@@ -2762,7 +2712,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                       </div>
                     </div>
 
-                    <ClinicalEcgTrace isElevated={isHrElevated} bpm={heartRate} />
+                    <ClinicalEcgTrace isElevated={isHrElevated} bpm={heartRate} live={isConnected} />
                   </div>
 
                   {/* Divisor vertical */}
@@ -2879,170 +2829,202 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
             flex: '1 1 265px',
             minWidth: '255px',
             maxWidth: '340px',
-            background: '#081322',
+            background: '#080a0f',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',
           }}
         >
           <div>
-            {/* Encabezado estructural del panel de Obstáculos y pendientes */}
-            <div
-              style={{
-                background: '#0b1829',
-                borderBottom: '1px solid #182940',
-                padding: '11px 14px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-              }}
-            >
-              <span
-                style={{
-                  color: '#f1f5f9',
-                  fontWeight: 600,
-                  fontSize: '13.5px',
-                  lineHeight: 1.2,
-                }}
-              >
-                Obstáculos y pendientes
-              </span>
-              <span
-                style={{
-                  fontSize: '11px',
-                  color: '#8a9bb2',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {droneData?.obstacles?.length
-                  ? `${droneData.obstacles.length} detectados`
-                  : ' Evaluación activa'}
-              </span>
-            </div>
-
-            {/* Lista estructurada de condiciones del terreno (sin ondas decorativas ni lavados de gradiente) */}
-            <div style={{ padding: '10px 12px 6px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {riskCards.map((c, i) => (
-                <div
-                  key={i}
+            {/* Encabezado del panel de Obstáculos y pendientes */}
+            <div style={{ padding: '12px 14px 10px 14px', borderBottom: '1px solid #23252b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                  <AlertTriangle size={15} color="#e2e8f0" />
+                  <span style={{ color: '#f1f5f9', fontWeight: 600, fontSize: '13.5px' }}>
+                    Obstáculos &amp; pendientes
+                  </span>
+                </span>
+                <span
                   style={{
-                    position: 'relative',
-                    background: '#0b1626',
-                    border: '1px solid #182940',
-                    borderLeft: `3px solid ${c.accent}`,
-                    borderRadius: '5px',
-                    padding: '9px 11px 9px 12px',
+                    fontSize: '10.5px',
+                    color: '#8a9bb2',
+                    fontVariantNumeric: 'tabular-nums',
+                    border: '1px solid #2a2c33',
+                    borderRadius: '4px',
+                    padding: '1.5px 6px',
                   }}
                 >
-                  {/* Fila 1: Título específico del hallazgo + lectura numérica tabular */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      justifyContent: 'space-between',
-                      gap: '8px',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: '#f1f5f9',
-                        fontSize: '12.5px',
-                        fontWeight: 600,
-                        lineHeight: 1.25,
-                      }}
-                    >
-                      {c.title}
-                    </span>
-                    <span
-                      style={{
-                        color: c.level === 'red' ? '#f87171' : c.level === 'yellow' ? '#fbbf24' : '#f1f5f9',
-                        fontSize: '14.5px',
-                        fontWeight: 600,
-                        fontVariantNumeric: 'tabular-nums',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {c.metric}
-                    </span>
-                  </div>
+                  {String(alertCards.length).padStart(2, '0')}
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: '9.5px',
+                  color: '#38bdf8',
+                  letterSpacing: '0.08em',
+                  marginTop: '5px',
+                  fontFamily: MONO_READOUT_FONT,
+                }}
+              >
+                DETECCIÓN EN EL CORREDOR DE RUTA
+              </div>
+              <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: '#cbd5e1' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e5484d' }} />
+                  {String(criticalCount).padStart(2, '0')} Críticos
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: '#cbd5e1' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e5a024' }} />
+                  {String(cautionCount).padStart(2, '0')} Precaución
+                </span>
+              </div>
+            </div>
 
-                  {/* Fila 2: Etiqueta de severidad + referencia de umbral/fuente */}
+            {/* Lista de hallazgos: uno por obstáculo/pendiente real detectado */}
+            <style>{`
+              .obstacle-card-list {
+                scrollbar-width: thin;
+                scrollbar-color: #475569 transparent;
+              }
+              .obstacle-card-list::-webkit-scrollbar {
+                width: 5px;
+              }
+              .obstacle-card-list::-webkit-scrollbar-track {
+                background: transparent;
+              }
+              .obstacle-card-list::-webkit-scrollbar-thumb {
+                background: #475569;
+                border-radius: 999px;
+              }
+              .obstacle-card-list::-webkit-scrollbar-thumb:hover {
+                background: #64748b;
+              }
+            `}</style>
+            <div
+              className="obstacle-card-list"
+              style={{
+                padding: '10px 12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                maxHeight: '260px',
+                overflowY: 'auto',
+              }}
+            >
+              {alertCards.length === 0 ? (
+                <div style={{ fontSize: '11px', color: '#8a9bb2', padding: '6px 2px' }}>
+                  Sin alertas de terreno en este momento.
+                </div>
+              ) : (
+                alertCards.map((c, i) => (
                   <div
+                    key={i}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '6px',
-                      marginBottom: '6px',
+                      background: '#15171c',
+                      border: '1px solid #262830',
+                      borderRadius: '6px',
+                      padding: '9px 11px',
                     }}
                   >
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        padding: '1.5px 6px',
-                        borderRadius: '3px',
-                        background: c.badgeBg,
-                        border: `1px solid ${c.badgeBorder}`,
-                        color: c.badgeText,
-                        fontSize: '10.5px',
-                        fontWeight: 500,
-                        lineHeight: 1.3,
-                      }}
-                    >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span
                         style={{
-                          width: '5px',
-                          height: '5px',
-                          borderRadius: '50%',
-                          background: c.accent,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          fontSize: '9.5px',
+                          fontWeight: 600,
+                          letterSpacing: '0.06em',
+                          color: c.badgeText,
                         }}
-                      />
-                      {c.severityLabel}
-                    </span>
-                    <span
+                      >
+                        <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: c.accent }} />
+                        {c.severityLabel.toUpperCase()}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: '13.5px',
+                          fontWeight: 700,
+                          color: c.accent,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {c.metric}
+                      </span>
+                    </div>
+                    <div
                       style={{
-                        fontSize: '10.5px',
-                        color: '#8a9bb2',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: '3px',
+                      }}
+                    >
+                      <span style={{ color: '#f1f5f9', fontSize: '12.5px', fontWeight: 600 }}>{c.title}</span>
+                      <ChevronRight size={14} color="#475569" />
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        marginTop: '2px',
+                        fontSize: '10px',
+                        color: '#64748b',
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {c.meta}
-                    </span>
+                      <span>{c.source}</span>
+                      <span>{c.value}</span>
+                    </div>
                   </div>
-
-                  {/* Fila 3: Acción recomendada en voz activa */}
-                  <div
-                    style={{
-                      color: '#cbd5e1',
-                      fontSize: '11.5px',
-                      lineHeight: 1.35,
-                      paddingTop: '5px',
-                      borderTop: '1px solid #132236',
-                    }}
-                  >
-                    {c.action}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
+
+            {detectorList && (
+              <div
+                style={{
+                  padding: '2px 14px 10px 14px',
+                  fontSize: '10px',
+                  color: '#64748b',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <RefreshCw size={11} color="#475569" />
+                {detectorList}
+              </div>
+            )}
           </div>
 
           {/* Apartado de Elevación integrado en la parte inferior de la barra derecha */}
-          <div style={{ padding: '4px 10px 10px 10px' }}>
-            <div
-              style={{
-                textAlign: 'center',
-                fontSize: '14px',
-                fontWeight: 600,
-                color: '#f1f5f9',
-                marginBottom: '2px',
-              }}
-            >
-              Elevación
+          <div style={{ padding: '10px 14px 12px 14px', borderTop: '1px solid #23252b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                <Mountain size={14} color="#e2e8f0" />
+                <span style={{ color: '#f1f5f9', fontWeight: 600, fontSize: '13px' }}>Perfil de elevación</span>
+              </span>
+              {elevationProfile.length >= 2 && (
+                <span
+                  style={{
+                    fontSize: '10px',
+                    color: '#8a9bb2',
+                    border: '1px solid #2a2c33',
+                    borderRadius: '4px',
+                    padding: '1.5px 6px',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {elevationProfile.length} MUESTRAS
+                </span>
+              )}
             </div>
+            <div style={{ fontSize: '10.5px', color: '#64748b', marginTop: '3px', marginBottom: '8px' }}>
+              Terreno sintético · a lo largo de la ruta A*
+            </div>
+
             {!isConnected ? (
               <div style={{ textAlign: 'center', padding: '16px 8px' }}>
                 <div style={{ color: '#ef4444', fontWeight: 700, fontSize: '13px', marginBottom: '4px' }}>
@@ -3053,7 +3035,56 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                 </div>
               </div>
             ) : elevationProfile.length >= 2 ? (
-              <ElevationChart profile={elevationProfile} maxSlopeDeg={maxRouteSlopeDeg} />
+              <>
+                <ElevationChart profile={elevationProfile} maxSlopeDeg={maxRouteSlopeDeg} />
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: '9.5px',
+                    color: '#64748b',
+                    marginTop: '2px',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  <span>INICIO {elevationProfile[0].elev.toFixed(2)} m</span>
+                  <span>FIN {elevationProfile[elevationProfile.length - 1].elev.toFixed(2)} m</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      background: '#15171c',
+                      border: '1px solid #262830',
+                      borderRadius: '6px',
+                      padding: '8px 10px',
+                    }}
+                  >
+                    <div style={{ fontSize: '9px', color: '#64748b', letterSpacing: '0.06em' }}>DESNIVEL NETO</div>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#f1f5f9', marginTop: '2px' }}>
+                      {(() => {
+                        const d =
+                          elevationProfile[elevationProfile.length - 1].elev - elevationProfile[0].elev;
+                        return `${d >= 0 ? '+' : ''}${d.toFixed(2)} m`;
+                      })()}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      background: '#15171c',
+                      border: '1px solid #262830',
+                      borderRadius: '6px',
+                      padding: '8px 10px',
+                    }}
+                  >
+                    <div style={{ fontSize: '9px', color: '#64748b', letterSpacing: '0.06em' }}>PENDIENTE MÁX.</div>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#fb923c', marginTop: '2px' }}>
+                      {maxRouteSlopeDeg.toFixed(1)}°
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : hasUserSelectedTarget ? (
               <div style={{ textAlign: 'center', padding: '16px 8px' }}>
                 <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: '12px', marginBottom: '4px' }}>

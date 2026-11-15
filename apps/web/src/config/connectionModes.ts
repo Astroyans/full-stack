@@ -67,7 +67,10 @@ export const FIXED_DRONE_PAD_POS: [number, number] = [1.5, 5.4];
 
 export function buildTopographicDataset(
   droneData?: DroneData | BerniTopographyInput | null,
-  contourStep: number = 1.5
+  // Antes 1.5: con fotos reales de Mars Trek (más ruido de textura que la imagen
+  // estática original) generaba demasiados niveles y las curvas se veían como
+  // manchas desconectadas en vez de líneas. 3.0 reduce la cantidad de niveles.
+  contourStep: number = 3
 ): MartianTerrainDataset {
   const obstacles = droneData?.obstacles ?? [];
   const rawZ = (droneData as any)?.altitude_m ?? droneData?.drone_pos?.[2] ?? 1.8;
