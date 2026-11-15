@@ -2,6 +2,7 @@ import { DroneData, RealMapStatePayload } from '@martian/shared';
 import { MartianTerrainDataset } from '../../config/connectionModes';
 import { d415MetersToMapMeters, ImageVisionAnalysis } from '../../utils/imageVision';
 import { SafeRouteResult } from '../../utils/pathfinderAStar';
+import { ScientificStop } from '../../data/stops';
 
 export type MapLayerMode =
   | 'fusion_mars_d415'
@@ -30,6 +31,7 @@ export interface MapCanvasRenderParams {
   basePos: [number, number];
   dronePadPos: [number, number];
   evaPos: [number, number];
+  stops?: ScientificStop[];
 }
 
 function drawHeadingTape(ctx: CanvasRenderingContext2D, width: number): void {
@@ -186,6 +188,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     safeRoute,
     targetPoint,
     evaPos,
+    stops,
   } = params;
 
   // 1. Dibujar el fondo activo
@@ -584,6 +587,30 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.textBaseline = 'middle';
   ctx.fillText('Destino', targetPx + 11, targetPy + 1);
   ctx.restore();
+
+  // 10.5 Paradas científicas (agregadas por el usuario con clic derecho)
+  if (stops && stops.length > 0) {
+    for (const stop of stops) {
+      const px = (stop.xm / dataset.widthMeters) * width;
+      const py = (stop.ym / dataset.heightMeters) * height;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(px, py, 8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(8, 23, 38, 0.92)';
+      ctx.fill();
+      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.stroke();
+
+      ctx.font = 'bold 10px "Inter", "Segoe UI", sans-serif';
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(stop.number), px, py + 0.5);
+      ctx.restore();
+    }
+  }
 
   // 11. Cinta superior de rumbo y brújula superior derecha
   drawHeadingTape(ctx, width);

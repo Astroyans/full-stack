@@ -20,6 +20,7 @@ import {
 } from '../config/connectionConfig';
 import { MapLayerMode, renderTopographicMapCanvas } from './map/mapCanvasRenderer';
 import { d415MetersToMapMeters } from '../utils/imageVision';
+import { MAX_STOPS, ScientificStop } from '../data/stops';
 
 interface TopographicMap2DProps {
   dataset: MartianTerrainDataset;
@@ -66,6 +67,35 @@ function buildSmoothPath(pts: Array<[number, number]>): string {
     d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
   }
   return d;
+}
+
+// Proyecta un punto sobre la polilínea de la ruta y devuelve la distancia recorrida
+// desde el inicio (EVA-01) hasta esa proyección, en las mismas unidades de "metros"
+// que ya usa safeRoute.distanceMeters (hypot directo sobre los puntos mapeados).
+function distanceAlongRoute(route: Array<[number, number]>, point: [number, number]): number {
+  if (route.length < 2) return 0;
+  let cumulative = 0;
+  let bestCumAtProjection = 0;
+  let bestPerpDist = Infinity;
+
+  for (let i = 0; i < route.length - 1; i++) {
+    const [ax, ay] = route[i];
+    const [bx, by] = route[i + 1];
+    const segLen = Math.hypot(bx - ax, by - ay);
+    const dirX = segLen ? (bx - ax) / segLen : 0;
+    const dirY = segLen ? (by - ay) / segLen : 0;
+    const t = Math.max(0, Math.min(segLen, (point[0] - ax) * dirX + (point[1] - ay) * dirY));
+    const projX = ax + dirX * t;
+    const projY = ay + dirY * t;
+    const perp = Math.hypot(point[0] - projX, point[1] - projY);
+    if (perp < bestPerpDist) {
+      bestPerpDist = perp;
+      bestCumAtProjection = cumulative + t;
+    }
+    cumulative += segLen;
+  }
+
+  return Number(bestCumAtProjection.toFixed(1));
 }
 
 const AstronautIcon: React.FC<{ size?: number; color: string }> = ({ size = 20, color }) => (
@@ -435,6 +465,145 @@ const StatusIconsCluster: React.FC<{ level: number }> = ({ level }) => {
   );
 };
 
+// Fila de la leyenda: un swatch (igual símbolo/color que el mapa) + descripción corta.
+const LegendRow: React.FC<{ swatch: React.ReactNode; label: string; desc: string }> = ({
+  swatch,
+  label,
+  desc,
+}) => (
+  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+    <div style={{ width: '22px', flexShrink: 0, display: 'flex', justifyContent: 'center', paddingTop: '1px' }}>
+      {swatch}
+    </div>
+    <div style={{ lineHeight: 1.3 }}>
+      <div style={{ fontSize: '11px', fontWeight: 700, color: '#f1f5f9' }}>{label}</div>
+      <div style={{ fontSize: '10px', color: '#94a3b8' }}>{desc}</div>
+    </div>
+  </div>
+);
+
+// Panel de Leyenda: documenta, con el mismo símbolo y color exactos, lo que ya se dibuja
+// por defecto en el mapa (ruta, EVA-01, destino, dron + círculo de escaneo, obstáculos).
+const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, onToggle }) => (
+  <div style={{ position: 'absolute', left: '14px', top: '14px', zIndex: 7 }}>
+    {!open ? (
+      <button
+        onClick={onToggle}
+        title="Mostrar leyenda"
+        style={{
+          background: 'rgba(10, 18, 30, 0.82)',
+          border: '1px solid rgba(56, 189, 248, 0.55)',
+          borderRadius: '6px',
+          color: '#e2e8f0',
+          fontSize: '11px',
+          fontWeight: 600,
+          padding: '5px 10px',
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+        }}
+      >
+        Leyenda
+      </button>
+    ) : (
+      <div
+        style={{
+          width: '210px',
+          background: 'rgba(8, 16, 28, 0.82)',
+          border: '1px solid rgba(56, 189, 248, 0.55)',
+          borderRadius: '8px',
+          padding: '10px 11px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.55)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '8px',
+          }}
+        >
+          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#38bdf8' }}>Leyenda</span>
+          <button
+            onClick={onToggle}
+            title="Ocultar leyenda"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#94a3b8',
+              cursor: 'pointer',
+              fontSize: '13px',
+              lineHeight: 1,
+              padding: '2px 4px',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+          <LegendRow
+            label="Ruta segura"
+            desc="Camino calculado por el host"
+            swatch={
+              <svg viewBox="0 0 22 10" width="22" height="10">
+                <line x1="1" y1="5" x2="21" y2="5" stroke="#4ade80" strokeWidth="2.4" strokeDasharray="4,3" strokeLinecap="round" />
+              </svg>
+            }
+          />
+          <LegendRow
+            label="EVA-01"
+            desc="Posición actual del astronauta"
+            swatch={
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6" fill="#0b192c" stroke="#38bdf8" strokeWidth="2.2" />
+              </svg>
+            }
+          />
+          <LegendRow
+            label="Destino"
+            desc="Punto objetivo de la caminata"
+            swatch={
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6" fill="#1c1917" stroke="#f59e0b" strokeWidth="2.2" />
+              </svg>
+            }
+          />
+          <LegendRow
+            label="Dron y radio de escaneo"
+            desc="Posición del dron y zona cubierta"
+            swatch={
+              <svg viewBox="0 0 22 22" width="22" height="22">
+                <circle cx="11" cy="11" r="10" fill="rgba(168, 85, 247, 0.25)" stroke="rgba(192, 132, 252, 0.55)" strokeWidth="1.3" />
+                <circle cx="11" cy="11" r="3" fill="#c084fc" />
+              </svg>
+            }
+          />
+          <LegendRow
+            label="Obstáculo / cráter"
+            desc="Zona de riesgo detectada"
+            swatch={
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <ellipse cx="8" cy="8" rx="6.5" ry="5" fill="rgba(239, 68, 68, 0.18)" stroke="rgba(248, 113, 113, 0.9)" strokeWidth="1.4" />
+              </svg>
+            }
+          />
+          <LegendRow
+            label="Parada científica"
+            desc="Clic derecho agrega (máx. 4); clic derecho sobre ella la borra"
+            swatch={
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <circle cx="8" cy="8" r="6" fill="rgba(8, 23, 38, 0.92)" stroke="#38bdf8" strokeWidth="2" />
+                <text x="8" y="8.5" textAnchor="middle" dominantBaseline="middle" fontSize="7" fontWeight="700" fill="#f8fafc">1</text>
+              </svg>
+            }
+          />
+        </div>
+      </div>
+    )}
+  </div>
+);
+
 export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   dataset,
   droneData,
@@ -471,6 +640,16 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const [hasUserSelectedTarget, setHasUserSelectedTarget] = useState<boolean>(false);
   const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
+  const [showLegend, setShowLegend] = useState<boolean>(false);
+
+  // Paradas científicas: se agregan con clic derecho (hasta MAX_STOPS) y se quitan
+  // con clic derecho sobre una ya puesta.
+  const [stops, setStops] = useState<ScientificStop[]>([]);
+  const [pendingStopPos, setPendingStopPos] = useState<[number, number] | null>(null);
+  const [pendingStopName, setPendingStopName] = useState<string>('');
+  const [pendingStopObjective, setPendingStopObjective] = useState<string>('');
+  const [maxStopsNotice, setMaxStopsNotice] = useState<boolean>(false);
+  const [selectedStop, setSelectedStop] = useState<ScientificStop | null>(null);
 
   const [hoverCoords, setHoverCoords] = useState<{ lat: string; lon: string }>({
     lat: '-11.49907',
@@ -732,6 +911,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       basePos,
       dronePadPos,
       evaPos,
+      stops,
     });
   }, [
     dataset,
@@ -746,22 +926,101 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     evaYaw,
     targetPoint,
     safeRoute,
+    stops,
   ]);
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Convierte la posición del mouse/clic en el canvas a las mismas "unidades" (0..10)
+  // que usa el resto del mapa para EVA-01, Destino, el Dron y ahora las paradas.
+  const eventToMeters = (e: { clientX: number; clientY: number }): [number, number] | null => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const relX = Math.max(0.04, Math.min(0.96, (e.clientX - rect.left) / rect.width));
     const relY = Math.max(0.05, Math.min(0.95, (e.clientY - rect.top) / rect.height));
-    const xm = Number((relX * dataset.widthMeters).toFixed(2));
-    const ym = Number((relY * dataset.heightMeters).toFixed(2));
+    return [
+      Number((relX * dataset.widthMeters).toFixed(2)),
+      Number((relY * dataset.heightMeters).toFixed(2)),
+    ];
+  };
+
+  const STOP_HIT_RADIUS_M = dataset.widthMeters * 0.04;
+
+  const findStopNear = (xm: number, ym: number): ScientificStop | null => {
+    let closest: ScientificStop | null = null;
+    let bestDist = Infinity;
+    for (const s of stops) {
+      const d = Math.hypot(s.xm - xm, s.ym - ym);
+      if (d < STOP_HIT_RADIUS_M && d < bestDist) {
+        bestDist = d;
+        closest = s;
+      }
+    }
+    return closest;
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pt = eventToMeters(e);
+    if (!pt) return;
+    const [xm, ym] = pt;
+
+    const hit = findStopNear(xm, ym);
+    if (hit) {
+      setSelectedStop(hit);
+      return;
+    }
+
+    setSelectedStop(null);
     setTargetPoint([xm, ym]);
     setHasUserSelectedTarget(true);
     if (onTargetSelect) {
       onTargetSelect([xm, ym]);
     }
   };
+
+  // Clic derecho: sobre una parada existente la borra; sobre vacío abre el
+  // formulario para agregar una nueva (hasta MAX_STOPS).
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const pt = eventToMeters(e);
+    if (!pt) return;
+    const [xm, ym] = pt;
+
+    const hit = findStopNear(xm, ym);
+    if (hit) {
+      setStops((prev) =>
+        prev.filter((s) => s.id !== hit.id).map((s, i) => ({ ...s, number: i + 1 }))
+      );
+      if (selectedStop?.id === hit.id) setSelectedStop(null);
+      return;
+    }
+
+    if (stops.length >= MAX_STOPS) {
+      setMaxStopsNotice(true);
+      window.setTimeout(() => setMaxStopsNotice(false), 2200);
+      return;
+    }
+
+    setPendingStopName('');
+    setPendingStopObjective('');
+    setPendingStopPos([xm, ym]);
+  };
+
+  const confirmAddStop = () => {
+    if (!pendingStopPos) return;
+    const number = stops.length + 1;
+    const newStop: ScientificStop = {
+      id: `stop-${Date.now()}`,
+      number,
+      name: pendingStopName.trim() || `Parada ${number}`,
+      objective: pendingStopObjective.trim() || 'Objetivo científico por definir',
+      xm: pendingStopPos[0],
+      ym: pendingStopPos[1],
+    };
+    setStops((prev) => [...prev, newStop]);
+    setPendingStopPos(null);
+  };
+
+  const cancelAddStop = () => setPendingStopPos(null);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -1081,6 +1340,9 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
           {/* Área central del Mapa */}
           <div style={{ position: 'relative', flex: 1, background: '#07101d' }}>
+            {/* Leyenda plegable (arriba a la izquierda) */}
+            <MapLegend open={showLegend} onToggle={() => setShowLegend(!showLegend)} />
+
             {/* Aviso visual flotante de estado de Host y Ruta */}
             {!isConnected && (
               <div
@@ -1138,6 +1400,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               height={540}
               onClick={handleCanvasClick}
               onMouseMove={handleMouseMove}
+              onContextMenu={handleCanvasContextMenu}
               style={{
                 width: '100%',
                 height: '100%',
@@ -1147,6 +1410,174 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                 objectFit: 'cover',
               }}
             />
+
+            {/* Formulario para agregar una parada científica (clic derecho en el mapa) */}
+            {pendingStopPos && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${Math.min(78, (pendingStopPos[0] / dataset.widthMeters) * 100)}%`,
+                  top: `${Math.min(80, (pendingStopPos[1] / dataset.heightMeters) * 100)}%`,
+                  transform: 'translate(-10px, -10px)',
+                  background: 'rgba(8, 17, 30, 0.97)',
+                  border: '1.5px solid #38bdf8',
+                  borderRadius: '10px',
+                  padding: '10px 12px',
+                  width: '210px',
+                  zIndex: 20,
+                  boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px',
+                }}
+              >
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#7dd3fc', letterSpacing: '0.3px' }}>
+                  NUEVA PARADA CIENTÍFICA
+                </span>
+                <input
+                  autoFocus
+                  value={pendingStopName}
+                  onChange={(e) => setPendingStopName(e.target.value)}
+                  placeholder="Nombre"
+                  style={{
+                    background: '#0b1b2e',
+                    border: '1px solid #1e3a52',
+                    borderRadius: '6px',
+                    color: '#e2e8f0',
+                    fontSize: '11px',
+                    padding: '5px 7px',
+                    outline: 'none',
+                  }}
+                />
+                <textarea
+                  value={pendingStopObjective}
+                  onChange={(e) => setPendingStopObjective(e.target.value)}
+                  placeholder="Objetivo científico (una línea)"
+                  rows={2}
+                  style={{
+                    background: '#0b1b2e',
+                    border: '1px solid #1e3a52',
+                    borderRadius: '6px',
+                    color: '#e2e8f0',
+                    fontSize: '11px',
+                    padding: '5px 7px',
+                    outline: 'none',
+                    resize: 'none',
+                    fontFamily: 'inherit',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                  <button
+                    onClick={confirmAddStop}
+                    style={{
+                      flex: 1,
+                      background: '#0e7490',
+                      border: '1px solid #38bdf8',
+                      borderRadius: '6px',
+                      color: '#e0f2fe',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '5px 0',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Agregar
+                  </button>
+                  <button
+                    onClick={cancelAddStop}
+                    style={{
+                      flex: 1,
+                      background: 'transparent',
+                      border: '1px solid #334155',
+                      borderRadius: '6px',
+                      color: '#94a3b8',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      padding: '5px 0',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Aviso: límite de paradas alcanzado */}
+            {maxStopsNotice && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(15, 23, 42, 0.94)',
+                  border: '1.5px solid #f59e0b',
+                  borderRadius: '20px',
+                  padding: '5px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  zIndex: 22,
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.75)',
+                }}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} />
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#fde68a', letterSpacing: '0.4px' }}>
+                  MÁXIMO 4 PARADAS CIENTÍFICAS
+                </span>
+              </div>
+            )}
+
+            {/* Popup de información de la parada seleccionada (clic izquierdo sobre ella) */}
+            {selectedStop && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${Math.min(76, (selectedStop.xm / dataset.widthMeters) * 100)}%`,
+                  top: `${Math.min(78, (selectedStop.ym / dataset.heightMeters) * 100)}%`,
+                  transform: 'translate(-10px, -10px)',
+                  background: 'rgba(8, 17, 30, 0.97)',
+                  border: '1.5px solid #38bdf8',
+                  borderRadius: '10px',
+                  padding: '10px 12px',
+                  width: '200px',
+                  zIndex: 20,
+                  boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#7dd3fc' }}>
+                    #{selectedStop.number} · {selectedStop.name}
+                  </span>
+                  <button
+                    onClick={() => setSelectedStop(null)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      lineHeight: 1,
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p style={{ fontSize: '11px', color: '#cbd5e1', margin: '6px 0 0', lineHeight: 1.4 }}>
+                  {selectedStop.objective}
+                </p>
+                <p style={{ fontSize: '10px', color: '#64748b', margin: '6px 0 0' }}>
+                  Distancia desde EVA-01 por la ruta:{' '}
+                  {safeRoute.points.length < 2
+                    ? 'sin ruta calculada'
+                    : `${distanceAlongRoute(safeRoute.points, [selectedStop.xm, selectedStop.ym]).toFixed(1)} m`}
+                </p>
+                <p style={{ fontSize: '9.5px', color: '#475569', margin: '6px 0 0' }}>
+                  Clic derecho sobre la parada para eliminarla
+                </p>
+              </div>
+            )}
 
             {/* Botón inferior izquierdo: Astronauta (abre/cierra Telemetría del traje EVA-01) */}
             <button
