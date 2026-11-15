@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-Crateres verificados sobre apps/web/public/mars-terrain.jpg (1024x443 px).
-
-HoughCircles y la coincidencia de plantillas generan demasiados falsos positivos
-en este mosaico con relieve sombreado, asi que se usa un conjunto de crateres
-etiquetados (centro y radio en pixeles de la imagen) y OpenCV solo para refinar
-cada centro/radio localmente con HoughCircles restringido a la vecindad del
-cráter. Esto garantiza que cada círculo rojo cae exactamente sobre un cráter.
-
-Uso: python3 scripts/detect_craters.py [--debug salida.jpg]
-"""
-
 import argparse
 import json
 import os
