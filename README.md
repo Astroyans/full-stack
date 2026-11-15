@@ -1,28 +1,40 @@
-# Martian Map & Rover Telemetry Dashboard (Full-Stack)
+# ARES-IV Martian Map & Rover Telemetry Dashboard (Full-Stack)
 
-Plataforma táctica de telemetría, visualización de terreno y cálculo de rutas seguras para operaciones en Marte. Integra visión por computadora, matrices topográficas de profundidad y trazado de rutas en tiempo real mediante comunicación bidireccional.
+**NASA Space Apps Challenge 2026 — *Interplanetary Survival Guide: Martian Map*** (Team **Astroyans**).
 
----
-
-## 1. Arquitectura de Comunicación Dual-Port
-
-El sistema separa el tráfico en dos puertos dedicados para garantizar baja latencia y evitar la saturación de los canales de control:
-
-* **Puerto de Salida (Lectura / Dashboard) — `:8765`**:
-  * Protocolo: WebSocket (`ws://<IP>:8765`) y HTTP GET.
-  * Consumidores: Dashboard Web (`apps/web`) y aplicación iPad (`apps/ipad`).
-  * Función: Difusión continua (*broadcast*) del estado global, imágenes tácticas y telemetría hacia las interfaces visuales.
-
-* **Puerto de Entrada (Ingesta / Sensores y Cálculo Externo) — `:8766`**:
-  * Protocolo: WebSocket (`ws://<IP>:8766`) y HTTP POST (`http://<IP>:8766/api/ingest`).
-  * Emisores: Sensores periféricos (Raspberry Pi, RealSense D415, ESP32, Algoritmos de visión externos).
-  * Función: Ingesta de paquetes JSON, transmisión de imágenes base64 y recepción de solicitudes de ruta.
+Tactical surface telemetry, planetary terrain visualization, and autonomous safe-route planning platform for human Marswalks in **Dollfus Crater (`21.8° S, 4.3° W`)**. Integrates orbital NASA imagery, real-time RGB-D computer vision, elevation/slope hazard grids, unexplored-quadrant scout drone dispatch, and bidirectional route planning across Mission Control Web (`apps/web`) and Astronaut iPad (`apps/ipad`) interfaces.
 
 ---
 
-## 2. Especificación de Datos Entrantes (Desde el Lado Externo)
+## 1. NASA Data & Planetary Integration
 
-La carga útil recibida por el Dashboard sigue el estándar validado en `latest_drone_cv.json` y `latest_expo_payload.json`:
+* **NASA JPL Mars Trek WMTS (`trek.nasa.gov`):**
+  * **Viking Color Mosaic** (`Mars_Viking_MDIM21_ClrMosaic_global_232m`, equirectangular up to native zoom `z=7`) for wide orbital context (up to 250 km span).
+  * **THEMIS Day IR Controlled Mosaic** (`THEMIS_DayIR_ControlledMosaics_100m_v2_oct2018`, equirectangular up to native zoom `z=9`) blended smoothly at closer tactical zoom levels.
+* **NASA JPL AI4Mars Terrain Taxonomy:** Semantic traversability cost weighting across `soil`, `bedrock`, `sand`, and `big_rock` surface classes.
+* **MGS MOLA & MRO HiRISE Topographic Modeling:** Crater rim/escarpment hazard detection (`OpenCV` HoughCircles, Canny + morphological closing, and SAM masks), slope calculations (`slopeDeg` / `max_incline_deg`), and route elevation profiles.
+
+---
+
+## 2. Dual-Port Communication Architecture
+
+The system isolates telemetry broadcast from sensor ingestion so high-rate RGB-D/vision packets never block tactical map updates:
+
+* **Outbound Port (Read / Dashboards) — `:8765`**
+  * **Protocols:** WebSocket (`ws://<IP>:8765`) and HTTP `GET`.
+  * **Consumers:** Web Mission Control (`apps/web`) and Astronaut iPad app (`apps/ipad`).
+  * **Role:** Continuous broadcast of global state, telemetry metrics, route waypoints, and base64 visual feeds (`rgb`, `depth`, `route_map`).
+
+* **Inbound Port (Sensor Ingestion & External Route Computation) — `:8766`**
+  * **Protocols:** WebSocket (`ws://<IP>:8766`) and HTTP `POST` (`http://<IP>:8766/api/ingest`).
+  * **Producers:** Raspberry Pi 3 + Intel RealSense D415 (`sturdy-couscous` / `Dron`), ESP32 mesh gateway (`Config-ESP32`), and vision pipelines.
+  * **Role:** High-frequency ingestion of JSON telemetry payloads, base64 sensor images, and interactive route computation requests.
+
+---
+
+## 3. Incoming Data Specification (External Telemetry Payload)
+
+Payloads consumed by the dashboard follow the validated schema in `apps/web/public/data/latest_drone_cv.json` and `latest_expo_payload.json`:
 
 ```json
 {
@@ -84,36 +96,35 @@ La carga útil recibida por el Dashboard sigue el estándar validado en `latest_
 }
 ```
 
-### Detalle de Campos Clave:
+### Key Field Reference
 
-### A. Imágenes Requeridas (`images`)
-1. **`rgb`**: Stream o snapshot RGB de la cámara táctica en formato JPEG Base64 (`data:image/jpeg;base64,...`).
-2. **`depth`**: Matriz de distancias / mapa de profundidad topográfico procesado en escala de color o niveles de gris.
-3. **`route_map`**: Mapa general / global persistente del terreno y área de operación.
+#### A. Visual Feeds (`images`)
+1. **`rgb`**: Live RGB snapshot from the aerial tactical camera encoded as JPEG Base64 (`data:image/jpeg;base64,...`).
+2. **`depth`**: Processed topographic depth matrix in colorized/grayscale form.
+3. **`route_map`**: Persistent global occupancy and A* / Dijkstra planned path visualization.
 
-### B. Información de Telemetría y Altura (`data`)
-* **`altitude_m`**: Altura actual del dron / sensor sobre el terreno expresada en **METROS** (ej. `0.24` m).
-* **`imu`**: Orientación angular en grados (`yaw`, `pitch`, `roll`).
-* **`max_incline_deg`**: Inclinación / pendiente máxima detectada en el terreno en grados.
-* **`safe_corridor`**: Booleano que indica si el corredor de avance inmediato es seguro (`true`) o requiere evasión (`false`).
-* **`obstacles`**: Lista de obstáculos detectados con distancias (`distance_m`), alturas (`height_m`) y profundidades (`depth_m`) en **METROS**.
-* **`rover_pose`**: Posición estimada del rover en **METROS** (`x_m`, `y_m`, `traversed_distance_m`).
+#### B. Telemetry & Spatial Navigation (`data`)
+* **`altitude_m`**: Drone/sensor altitude above the Martian surface in **meters**.
+* **`imu`**: Angular orientation in degrees (`yaw`, `pitch`, `roll`).
+* **`max_incline_deg`**: Maximum detected terrain slope angle in degrees.
+* **`safe_corridor`**: Boolean indicating whether the immediate forward path is safe (`true`) or requires obstacle avoidance (`false`).
+* **`obstacles`**: Detected 3D hazards (`BOULDER`, `CREVICE`) with `distance_m`, `bearing_deg`, `height_m`, and `depth_m` in **meters**.
+* **`rover_pose`**: Estimated explorer/rover position in **meters** (`x_m`, `y_m`, `traversed_distance_m`).
 
 ---
 
-## 3. Protocolo de Marcado de Ruta Interactivo (En METROS)
+## 4. Interactive Route Planning Protocol (Metric Coordinates)
 
-> **Regla de Coordenadas:**  
-> **Todas las coordenadas enviadas y recibidas para el trazado de rutas se expresan estrictamente en METROS (`x_m`, `y_m`)**, referenciadas al sistema de coordenadas métrico cartesiano del rover/misión (donde el eje X representa desplazamiento lateral y el eje Y representa avance longitudinal).
+> **Coordinate Rule:**
+> **All route planning requests and responses strictly use metric Cartesian coordinates (`x_m`, `y_m`)** referenced to the rover/mission local coordinate frame.
 
-### Flujo de Interacción:
-1. **Selección del objetivo**: El usuario hace clic en el mapa táctico o en la vista del sensor.
-2. **Cálculo de coordenadas**: El Dashboard convierte la posición del clic a coordenadas reales en **metros**:
+### Interaction Flow
+1. **Destination Selection:** The astronaut or operator clicks a target point on the tactical 2D map (or dispatches the drone to an unexplored quadrant such as `Q-NE` or `Q-SE`).
+2. **Coordinate Projection:** The dashboard converts the click location into mission metric coordinates:
    $$\text{target\_x\_m} = \text{relX} \times \text{widthMeters}$$
    $$\text{target\_y\_m} = \text{relY} \times \text{heightMeters}$$
-3. **Petición al servicio externo**: El Dashboard envía el punto de destino solicitado al servicio externo:
+3. **Route Request (`Dashboard -> Backend`):**
 
-   **Payload de Solicitud (Dashboard $\rightarrow$ Servicio Externo):**
    ```json
    {
      "action": "request_route",
@@ -129,9 +140,8 @@ La carga útil recibida por el Dashboard sigue el estándar validado en `latest_
    }
    ```
 
-4. **Respuesta del servicio externo**: El servicio externo calcula la ruta (mediante A*, Dijkstra u optimizador de trayectorias) evitando obstáculos y responde con la lista de waypoints en **metros**:
+4. **Route Response (`Backend -> Dashboard`):** The path planner (`sturdy-couscous`) runs A* / Dijkstra over the persistent terrain grid and returns obstacle-free waypoints in **meters**:
 
-   **Payload de Respuesta (Servicio Externo $\rightarrow$ Dashboard):**
    ```json
    {
      "status": "ok",
@@ -151,32 +161,47 @@ La carga útil recibida por el Dashboard sigue el estándar validado en `latest_
    }
    ```
 
-5. **Visualización en el Dashboard**: El Dashboard dibuja de inmediato los waypoints `route_waypoints_xy_m` sobre el canvas del mapa, traza el corredor de seguridad, actualiza la gráfica de elevación y muestra las métricas de navegación.
+5. **Real-Time Rendering:** The dashboard draws `route_waypoints_xy_m`, updates the safety corridor and elevation profile graph, tracks live drone recon sweeps, and persists scientific stops.
 
 ---
 
-## 4. Ejecución del Proyecto
+## 5. Running the Project
 
-### Requisitos Previos:
-* Node.js v18+ y `pnpm`
-* Python 3.9+ (para el servidor `mock_backbone.py`)
+### Prerequisites
+* Node.js 18+ with `npm` or `pnpm`
+* Python 3.10+ (for live telemetry via [`sturdy-couscous`](https://github.com/Astroyans/sturdy-couscous) or `mock_backbone.py`)
 
-### Pasos:
+### Steps
 
-1. **Instalar dependencias:**
+1. **Install dependencies:**
    ```bash
-   pnpm install
+   npm install
+   # or: pnpm install
    ```
 
-2. **Iniciar el servidor Backbone / Mock:**
-   ```bash
-   python3 mock_backbone.py
-   ```
-   * *Puerto 8765:* Servidor de salida hacia el Dashboard Web.
-   * *Puerto 8766:* Servidor de ingesta para sensores y cálculo de rutas.
+2. **Start the telemetry & pathfinding backend:**
+   * Using the full real-time pipeline (`sturdy-couscous`):
+     ```bash
+     python main_expo.py --source raspi3 --raspi-port 8766
+     ```
+   * Or using the local mock server:
+     ```bash
+     python mock_backbone.py
+     ```
+   * *Port `8765`:* Outbound HTTP/WebSocket server for Web & iPad clients.
+   * *Port `8766`:* Inbound ingestion port for Raspberry Pi 3 / RealSense D415 streams.
 
-3. **Iniciar el Dashboard Web:**
+3. **Start the Web Dashboard:**
    ```bash
-   pnpm --filter @martian/web dev
+   npm --prefix apps/web run dev -- --host 0.0.0.0
+   # or: pnpm --filter @martian/web dev
    ```
-   Abre tu navegador en `http://localhost:5173`.
+   Open `http://localhost:3000/` (or `http://localhost:5173/` depending on Vite config).
+
+---
+
+## 6. Related Astroyans Repositories
+
+* **Computer Vision, Log-Odds Mapping & Path Planning:** [Astroyans/sturdy-couscous](https://github.com/Astroyans/sturdy-couscous)
+* **Rust Telemetry & ToF Streaming Link (`nodo_dron` / `estacion_tierra`):** [Astroyans/Dron](https://github.com/Astroyans/Dron)
+* **ESP32 Mesh & MicroSD Route Backup Firmware:** [Astroyans/Config-ESP32](https://github.com/Astroyans/Config-ESP32)
