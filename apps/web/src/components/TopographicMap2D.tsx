@@ -1974,7 +1974,16 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
           {/* Área central del Mapa */}
           <div style={{ position: 'relative', flex: 1, background: '#080a0f' }}>
             {/* Leyenda plegable (arriba a la izquierda) */}
-            <MapLegend open={showLegend} onToggle={() => setShowLegend(!showLegend)} />
+            <MapLegend
+              open={showLegend}
+              onToggle={() => {
+                const next = !showLegend;
+                setShowLegend(next);
+                if (next) {
+                  setShowTelemetry(false);
+                }
+              }}
+            />
 
             {/* Aviso visual flotante de estado de Host y Ruta */}
             {!isConnected && (
@@ -2301,7 +2310,13 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
             {/* Botón inferior izquierdo: Astronauta (abre/cierra Telemetría del traje EVA-01) */}
             <button
-              onClick={() => setShowTelemetry(!showTelemetry)}
+              onClick={() => {
+                const next = !showTelemetry;
+                setShowTelemetry(next);
+                if (next) {
+                  setShowLegend(false);
+                }
+              }}
               title={showTelemetry ? 'Ocultar telemetría del traje' : 'Ver telemetría del traje EVA-01'}
               style={{
                 position: 'absolute',

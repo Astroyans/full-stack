@@ -432,6 +432,8 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
 
   // Zoom táctico
   const [zoomScale, setZoomScale] = useState(1.0);
+  // Escala kilométrica dinámica según el nivel de zoom táctico
+  const dynamicScaleKm = Number((100 / zoomScale).toFixed(zoomScale > 1.8 ? 1 : 0));
   const [targetPoint, setTargetPoint] = useState<[number, number]>([4.45, 2.75]);
   const [mapSize, setMapSize] = useState({ width: 680, height: 460 });
   const [hoverCoords, setHoverCoords] = useState({
@@ -1188,9 +1190,13 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
           {/* Botón superior izquierdo: LEYENDA */}
           <TouchableOpacity
             onPress={() => {
-              setShowLegend(!showLegend);
-              setShowLayersPanel(false);
-              setShowStopsPanel(false);
+              const next = !showLegend;
+              setShowLegend(next);
+              if (next) {
+                setShowTelemetry(false);
+                setShowLayersPanel(false);
+                setShowStopsPanel(false);
+              }
             }}
             style={styles.legendBtn}
           >
@@ -1243,9 +1249,13 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
           <View style={styles.topRightControlsRow}>
             <TouchableOpacity
               onPress={() => {
-                setShowStopsPanel(!showStopsPanel);
-                setShowLayersPanel(false);
-                setShowLegend(false);
+                const next = !showStopsPanel;
+                setShowStopsPanel(next);
+                if (next) {
+                  setShowLegend(false);
+                  setShowTelemetry(false);
+                  setShowLayersPanel(false);
+                }
               }}
               style={styles.stopsBtn}
             >
@@ -1257,9 +1267,13 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
 
             <TouchableOpacity
               onPress={() => {
-                setShowLayersPanel(!showLayersPanel);
-                setShowStopsPanel(false);
-                setShowLegend(false);
+                const next = !showLayersPanel;
+                setShowLayersPanel(next);
+                if (next) {
+                  setShowLegend(false);
+                  setShowTelemetry(false);
+                  setShowStopsPanel(false);
+                }
               }}
               style={styles.layersBtn}
             >
@@ -1466,7 +1480,15 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
 
             {/* Botón Astronauta (Telemetría EVA-01) */}
             <TouchableOpacity
-              onPress={() => setShowTelemetry(!showTelemetry)}
+              onPress={() => {
+                const next = !showTelemetry;
+                setShowTelemetry(next);
+                if (next) {
+                  setShowLegend(false);
+                  setShowLayersPanel(false);
+                  setShowStopsPanel(false);
+                }
+              }}
               style={styles.astronautCircleBtn}
             >
               <View
@@ -1606,7 +1628,9 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
             <View pointerEvents="none" style={styles.scaleLatLonBox}>
               <View style={styles.scaleBarRow}>
                 <View style={styles.scaleBracket} />
-                <Text style={styles.scaleKmText}>100 km</Text>
+                <Text style={styles.scaleKmText}>
+                  {dynamicScaleKm >= 1 ? `${dynamicScaleKm} km` : `${Math.round(dynamicScaleKm * 1000)} m`}
+                </Text>
               </View>
               <Text style={styles.latLonText}>
                 Lat: {hoverCoords.lat}  Lon: {hoverCoords.lon}
