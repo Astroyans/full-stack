@@ -1015,7 +1015,15 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const evaPos: [number, number] = [3.62, 5.55];
   const startPoint: [number, number] = evaPos;
 
-  const safeRoute = useMemo(() => {
+  const routeWaypointsSig = (() => {
+    const wps = droneData?.navigation?.route_waypoints_xy_m;
+    if (!wps || wps.length === 0) return '';
+    const first = wps[0];
+    const last = wps[wps.length - 1];
+    return `${wps.length}|${first[0]},${first[1]}|${last[0]},${last[1]}`;
+  })();
+
+  const computedSafeRoute = useMemo(() => {
     // Si NO hay host conectado, no trazamos ninguna línea falsa ni recta; indicamos NO HOST
     if (!isConnected) {
       return {
@@ -1095,10 +1103,29 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     isConnected,
     hasUserSelectedTarget,
     targetPoint,
-    droneData?.navigation?.route_waypoints_xy_m,
+    routeWaypointsSig,
     droneData?.max_slope_deg,
     droneData?.safe_path,
   ]);
+
+  const lastValidRouteRef = useRef<{
+    route: typeof computedSafeRoute;
+    target: string;
+    t: number;
+  } | null>(null);
+
+  const safeRoute = useMemo(() => {
+    const targetKey = `${hasUserSelectedTarget}|${targetPoint[0]}|${targetPoint[1]}`;
+    if (computedSafeRoute.points.length > 1) {
+      lastValidRouteRef.current = { route: computedSafeRoute, target: targetKey, t: Date.now() };
+      return computedSafeRoute;
+    }
+    const prev = lastValidRouteRef.current;
+    if (isConnected && prev && prev.target === targetKey && Date.now() - prev.t < 2000) {
+      return prev.route;
+    }
+    return computedSafeRoute;
+  }, [computedSafeRoute, isConnected, hasUserSelectedTarget, targetPoint]);
 
   const elevationProfile = useMemo(() => {
     if (!visionData || safeRoute.points.length < 2) return [];
