@@ -8,6 +8,9 @@ export type MapLayerMode =
   | 'fusion_mars_d415'
   | 'pure_d415_grid'
   | 'live_server_cam'
+  | 'live_route_map'
+  | 'live_rgb'
+  | 'live_depth'
   | 'topo_lines';
 
 export interface MapCanvasRenderParams {
@@ -21,6 +24,7 @@ export interface MapCanvasRenderParams {
   activeMapState: RealMapStatePayload | null;
   droneData?: DroneData | null;
   loadedImg: HTMLImageElement | null;
+  liveImg?: HTMLImageElement | null;
   mapLayerMode: MapLayerMode;
   showContours: boolean;
   showDetectedZones: boolean;
@@ -189,18 +193,41 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     targetPoint,
     evaPos,
     stops,
+    liveImg,
   } = params;
 
   // 1. Dibujar el fondo activo
   ctx.clearRect(0, 0, width, height);
+  const isLiveMode =
+    mapLayerMode === 'live_route_map' ||
+    mapLayerMode === 'live_rgb' ||
+    mapLayerMode === 'live_depth' ||
+    mapLayerMode === 'live_server_cam';
+
   if (mapLayerMode === 'pure_d415_grid') {
     ctx.fillStyle = '#090d16';
     ctx.fillRect(0, 0, width, height);
+  } else if (isLiveMode) {
+    if (liveImg) {
+      ctx.drawImage(liveImg, 0, 0, width, height);
+      ctx.fillStyle = 'rgba(7, 11, 20, 0.12)';
+      ctx.fillRect(0, 0, width, height);
+    } else {
+      ctx.fillStyle = '#060a12';
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '600 12px "SF Mono", "JetBrains Mono", Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('STANDBY // ESPERANDO STREAM EN VIVO DE D415...', width / 2, height / 2);
+    }
   } else if (loadedImg) {
     ctx.drawImage(loadedImg, 0, 0, width, height);
     ctx.fillStyle = visionData.isLineMap
       ? 'rgba(15, 23, 42, 0.08)'
       : 'rgba(8, 12, 22, 0.14)';
+    ctx.fillRect(0, 0, width, height);
+  } else {
+    ctx.fillStyle = '#080d18';
     ctx.fillRect(0, 0, width, height);
   }
 
