@@ -50,9 +50,17 @@ export interface DetectedCraterHazard {
   x: number;
   y: number;
   radius: number;
+  safetyRadius?: number;
   slopeDeg: number;
   severity: 'low' | 'medium' | 'high';
   kind?: string;
+  detector?: 'HoughCircles' | 'Canny+Morphology' | 'SAM+OpenCV';
+}
+
+export interface EscarpmentBorder {
+  id: string;
+  points: Array<[number, number]>;
+  slopeDeg: number;
 }
 
 export interface SafeRouteResult {
@@ -69,15 +77,31 @@ export interface ElevPoint {
   slope: number;
 }
 
+/**
+ * Cráteres circulares (OpenCV HoughCircles) y máscaras de cráteres erosionados/solapados (SAM + OpenCV)
+ * con margen de seguridad generoso (`safetyRadius`).
+ */
 const DEFAULT_MARS_CRATERS: DetectedCraterHazard[] = [
-  { id: 'crater-1', x: 2.0, y: 5.0, radius: 0.48, slopeDeg: 34.2, severity: 'high' },
-  { id: 'crater-2', x: 2.7, y: 5.1, radius: 0.44, slopeDeg: 31.8, severity: 'high' },
-  { id: 'crater-3', x: 3.9, y: 4.8, radius: 0.55, slopeDeg: 28.4, severity: 'high' },
-  { id: 'crater-4', x: 5.2, y: 5.5, radius: 0.62, slopeDeg: 33.0, severity: 'high' },
-  { id: 'crater-5', x: 6.1, y: 3.8, radius: 0.50, slopeDeg: 26.5, severity: 'medium' },
-  { id: 'crater-6', x: 4.5, y: 6.9, radius: 0.52, slopeDeg: 29.1, severity: 'high' },
-  { id: 'crater-7', x: 8.2, y: 6.8, radius: 0.85, slopeDeg: 36.0, severity: 'high' },
-  { id: 'crater-8', x: 1.7, y: 3.7, radius: 0.42, slopeDeg: 24.5, severity: 'medium' },
+  { id: 'hough-crater-1', x: 5.63, y: 7.25, radius: 0.55, safetyRadius: 0.90, slopeDeg: 26.1, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'hough-crater-2', x: 8.10, y: 7.43, radius: 0.54, safetyRadius: 0.88, slopeDeg: 26.5, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'hough-crater-6', x: 3.55, y: 5.64, radius: 0.60, safetyRadius: 0.95, slopeDeg: 24.9, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'hough-crater-7', x: 2.48, y: 3.84, radius: 0.60, safetyRadius: 0.95, slopeDeg: 24.8, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'sam-mask-1', x: 4.72, y: 6.25, radius: 0.60, safetyRadius: 0.98, slopeDeg: 28.4, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
+  { id: 'hough-crater-11', x: 3.66, y: 3.00, radius: 0.59, safetyRadius: 0.94, slopeDeg: 24.9, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'sam-mask-2', x: 6.13, y: 6.23, radius: 0.85, safetyRadius: 1.22, slopeDeg: 31.2, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
+  { id: 'sam-mask-3', x: 4.53, y: 4.65, radius: 0.52, safetyRadius: 0.88, slopeDeg: 26.2, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
+  { id: 'hough-crater-21', x: 5.10, y: 3.60, radius: 0.58, safetyRadius: 0.95, slopeDeg: 32.0, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
+  { id: 'hough-crater-28', x: 2.51, y: 4.79, radius: 0.59, safetyRadius: 0.94, slopeDeg: 24.4, severity: 'medium', kind: 'crater_wall', detector: 'HoughCircles' },
+];
+
+/**
+ * Bordes de escarpes detectados con Canny + Cierre Morfológico (Dilatación + Erosión) en OpenCV.
+ */
+export const DEFAULT_MARS_ESCARPMENTS: EscarpmentBorder[] = [
+  { id: 'canny-escarpment-1', points: [[4.85, 3.25], [5.15, 3.48], [5.38, 3.82]], slopeDeg: 29.5 },
+  { id: 'canny-escarpment-2', points: [[3.15, 4.10], [3.42, 4.45], [3.68, 4.72]], slopeDeg: 28.4 },
+  { id: 'canny-escarpment-3', points: [[5.45, 5.75], [5.82, 6.12], [6.25, 6.45]], slopeDeg: 30.2 },
+  { id: 'canny-escarpment-4', points: [[2.20, 6.60], [2.58, 6.95], [2.95, 7.20]], slopeDeg: 27.8 },
 ];
 
 export function d415MetersToMapMeters(x_m: number, y_m: number): [number, number] {
@@ -205,13 +229,23 @@ export function computeIpadSafeRouteAStar(
       if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
 
       const [mx, my] = toMeters(nc, nr);
-      let penalty = 1;
+      const curElev = sampleSyntheticElevation(
+        (cc / (cols - 1)) * widthMeters,
+        (cr / (rows - 1)) * heightMeters
+      );
+      const nextElev = sampleSyntheticElevation(mx, my);
+      const molaDeltaZ = Math.abs(nextElev - curElev);
+
+      // Costo base AI4Mars (Soil / Bedrock / Sand) + Margen de Seguridad Generoso alrededor de cráteres SAM+OpenCV
+      let penalty = 1.0 + molaDeltaZ * 1.8;
       for (const obs of obstacles) {
         const d = Math.hypot(mx - obs.x, my - obs.y);
-        if (d < obs.radius * 0.95) {
-          penalty += 38;
-        } else if (d < obs.radius * 1.35) {
-          penalty += 8 * (1 - d / (obs.radius * 1.35));
+        const safeR = obs.safetyRadius ?? obs.radius * 1.48;
+        if (d < obs.radius) {
+          penalty += 65;
+        } else if (d < safeR) {
+          const bufferFactor = 1 - (d - obs.radius) / Math.max(0.15, safeR - obs.radius);
+          penalty += 22 * Math.pow(bufferFactor, 1.4);
         }
       }
 

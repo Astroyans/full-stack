@@ -87,7 +87,32 @@ def load_real_map_state():
     return None
 
 
+def load_or_compute_opencv_craters():
+    """
+    Visión clásica (OpenCV): Canny + Morfología Matemática (Closing) + Transformada de Hough Circular.
+    Detecta cráteres como círculos (cv2.HoughCircles) y bordes de escarpes (cv2.Canny + cv2.morphologyEx).
+    Prototipo rápido sin entrenamiento previo.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    json_path = os.path.join(base_dir, "apps", "web", "public", "data", "opencv_craters.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            craters_n = len(data.get("craters_hough", []))
+            escarp_n = len(data.get("escarpments_canny_morph", []))
+            print(
+                f"[OpenCV Classical Vision] Cargados {craters_n} cráteres (HoughCircles) y "
+                f"{escarp_n} bordes de escarpes (Canny + Morfología)"
+            )
+            return data
+        except Exception as e:
+            print(f"[WARN] Error leyendo opencv_craters.json: {e}")
+    return {"pipeline": "OpenCV Classical Vision", "craters_hough": [], "escarpments_canny_morph": []}
+
+
 REAL_MAP_STATE = load_real_map_state()
+OPENCV_CRATERS_DATA = load_or_compute_opencv_craters()
 LATEST_INGESTED_PACKETS = {}
 
 
@@ -156,10 +181,88 @@ def broadcast_to_outbound(packet: dict):
             outbound_clients.discard(client)
 
 
+def compute_route_waypoints(start_x: float, start_y: float, target_x: float, target_y: float, steps: int = 18):
+    """
+    Genera waypoints estrictamente en METROS [ [x_m, y_m], ... ]
+    simulando la respuesta de un planificador A* con curvatura de evasión.
+    """
+    waypoints = []
+    dx = target_x - start_x
+    dy = target_y - start_y
+    dist = math.hypot(dx, dy)
+    for i in range(steps + 1):
+        ratio = i / float(steps)
+        base_x = start_x + dx * ratio
+        base_y = start_y + dy * ratio
+        arc = math.sin(ratio * math.pi) * 0.35
+        if dist > 0.01:
+            perp_x = -dy / dist * arc
+            perp_y = dx / dist * arc
+        else:
+            perp_x = 0.0
+            perp_y = 0.0
+        waypoints.append([round(base_x + perp_x, 2), round(base_y + perp_y, 2)])
+    return waypoints
+
+
+ACTIVE_ROUTE_WAYPOINTS = None
+HAS_EXTERNAL_SENSOR_CONNECTED = False
+
+
+def save_received_packet_and_images(packet: dict):
+    """
+    Guarda automáticamente en data/recibidos/:
+    - payload_<timestamp>.json y latest_received.json
+    - rgb_<timestamp>.jpg y latest_rgb.jpg (si viene images.rgb)
+    - depth_<timestamp>.jpg y latest_depth.jpg (si viene images.depth)
+    - route_map_<timestamp>.jpg y latest_route_map.jpg (si viene images.route_map)
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    recibidos_dir = os.path.join(base_dir, "data", "recibidos")
+    os.makedirs(recibidos_dir, exist_ok=True)
+    ts = int(time.time())
+
+    # 1. Guardar JSON
+    try:
+        json_path = os.path.join(recibidos_dir, f"payload_{ts}.json")
+        latest_json = os.path.join(recibidos_dir, "latest_received.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(packet, f, indent=2)
+        with open(latest_json, "w", encoding="utf-8") as f:
+            json.dump(packet, f, indent=2)
+    except Exception as e:
+        print(f"[WARN] Error guardando JSON recibido: {e}")
+
+    # 2. Guardar Imágenes Base64
+    images = packet.get("images", {})
+    saved_imgs = []
+    if isinstance(images, dict):
+        for img_key in ["rgb", "depth", "route_map"]:
+            raw_b64 = images.get(img_key)
+            if raw_b64 and isinstance(raw_b64, str):
+                try:
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    img_bytes = base64.b64decode(raw_b64)
+                    fname = os.path.join(recibidos_dir, f"{img_key}_{ts}.jpg")
+                    latest_fname = os.path.join(recibidos_dir, f"latest_{img_key}.jpg")
+                    with open(fname, "wb") as f:
+                        f.write(img_bytes)
+                    with open(latest_fname, "wb") as f:
+                        f.write(img_bytes)
+                    saved_imgs.append(f"{img_key}.jpg")
+                except Exception as e:
+                    print(f"[WARN] Error guardando imagen {img_key}: {e}")
+
+    imgs_info = f", imágenes: {', '.join(saved_imgs)}" if saved_imgs else ""
+    print(f"\n>>> [ARCHIVOS GUARDADOS EN DISCO] en 'data/recibidos/' (JSON{imgs_info}) <<<")
+
+
 # =====================================================================
 # 1. SERVIDOR DE SALIDA (PUERTO 8765) -> Hacia Dashboard Web / iPad
 # =====================================================================
 async def handle_outbound_client(reader, writer):
+    global ACTIVE_ROUTE_WAYPOINTS
     request = b""
     while True:
         line = await reader.readline()
@@ -186,6 +289,8 @@ async def handle_outbound_client(reader, writer):
             send_http_json(writer, {"ok": True})
         elif path in ("/map_state.json", "/data/real_map_state.json", "/api/map-state"):
             send_http_json(writer, REAL_MAP_STATE or {})
+        elif path in ("/opencv_craters.json", "/data/opencv_craters.json", "/api/opencv-craters"):
+            send_http_json(writer, OPENCV_CRATERS_DATA or {})
         elif path in ("/latest_expo_payload.json", "/latest_drone_cv.json", "/api/d415-latest", "/"):
             if "drone_cv" in LATEST_INGESTED_PACKETS:
                 payload_out = dict(LATEST_INGESTED_PACKETS["drone_cv"])
@@ -252,12 +357,23 @@ async def handle_outbound_client(reader, writer):
 
     try:
         while True:
-            opcode, _ = await read_ws_frame(reader)
+            opcode, payload_bytes = await read_ws_frame(reader)
             if opcode == 0x08:  # Close
                 break
             if opcode == 0x09:  # Ping -> Pong
                 writer.write(struct.pack("!BB", 0x8A, 0))
                 await writer.drain()
+                continue
+            if opcode == 0x01 and payload_bytes:  # Mensaje entrante desde el Dashboard Web
+                try:
+                    msg = json.loads(payload_bytes.decode("utf-8"))
+                    if msg.get("action") == "request_route" or "target" in msg:
+                        target = msg.get("target", {})
+                        tx = float(target.get("x_m", target.get("x", 0.0)))
+                        ty = float(target.get("y_m", target.get("y", 0.0)))
+                        print(f"[DASHBOARD LOCAL] Hiciste clic en destino ({tx}m, {ty}m). Esperando que el host externo calcule y envíe la ruta.")
+                except Exception:
+                    pass
     except Exception:
         pass
     finally:
@@ -274,7 +390,7 @@ async def handle_outbound_client(reader, writer):
 # 2. SERVIDOR DE ENTRADA (PUERTO 8766) <- Desde ESP32 / Raspi / D415
 # =====================================================================
 async def handle_inbound_sensor(reader, writer):
-    global REAL_MAP_STATE
+    global REAL_MAP_STATE, ACTIVE_ROUTE_WAYPOINTS, HAS_EXTERNAL_SENSOR_CONNECTED
     request = b""
     while True:
         line = await reader.readline()
@@ -303,8 +419,53 @@ async def handle_inbound_sensor(reader, writer):
             raw_body = await reader.readexactly(content_len) if content_len > 0 else b"{}"
             try:
                 packet = json.loads(raw_body.decode("utf-8"))
+                if packet.get("action") == "request_route" or "target" in packet:
+                    target = packet.get("target", {})
+                    tx = float(target.get("x_m", target.get("x", 1.5)))
+                    ty = float(target.get("y_m", target.get("y", 3.0)))
+                    origin = packet.get("origin", {})
+                    ox = float(origin.get("x_m", origin.get("x", 0.25)))
+                    oy = float(origin.get("y_m", origin.get("y", -0.05)))
+                    waypoints = compute_route_waypoints(ox, oy, tx, ty)
+                    ACTIVE_ROUTE_WAYPOINTS = waypoints
+
+                    base_dp = LATEST_INGESTED_PACKETS.get("drone_cv")
+                    if not base_dp:
+                        if REAL_D415_FRAMES:
+                            base_dp = dict(REAL_D415_FRAMES[CURRENT_FRAME_INDEX % len(REAL_D415_FRAMES)])
+                        else:
+                            base_dp = {"node": "drone_cv", "timestamp": int(time.time()), "data": {}}
+
+                    dp = dict(base_dp)
+                    if "data" not in dp or not isinstance(dp["data"], dict):
+                        dp["data"] = {}
+                    dp["data"] = dict(dp["data"])
+                    nav = dict(dp["data"].get("navigation", {})) if isinstance(dp["data"].get("navigation"), dict) else {}
+                    nav["route_waypoints_xy_m"] = waypoints
+                    nav["active_planner"] = "astar"
+                    dp["data"]["navigation"] = nav
+                    dp["node"] = "drone_cv"
+                    dp["node_id"] = "drone_cv"
+                    dp["timestamp"] = int(time.time())
+                    LATEST_INGESTED_PACKETS["drone_cv"] = dp
+                    broadcast_to_outbound(dp)
+
+                    send_http_json(
+                        writer,
+                        {"ok": True, "status": "ok", "unit": "meters", "waypoints": waypoints},
+                    )
+                    await writer.drain()
+                    writer.close()
+                    try:
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+                    return
+
                 node_id = packet.get("node_id") or packet.get("node") or "external_sensor"
                 LATEST_INGESTED_PACKETS[node_id] = packet
+                HAS_EXTERNAL_SENSOR_CONNECTED = True
+                save_received_packet_and_images(packet)
                 if "map_state" in packet and isinstance(packet["map_state"], dict):
                     REAL_MAP_STATE = packet["map_state"]
                 if inbound_queue is not None:
@@ -362,6 +523,8 @@ async def handle_inbound_sensor(reader, writer):
                     packet = json.loads(payload_bytes.decode("utf-8"))
                     node_id = packet.get("node_id") or packet.get("node") or "external_sensor"
                     LATEST_INGESTED_PACKETS[node_id] = packet
+                    HAS_EXTERNAL_SENSOR_CONNECTED = True
+                    save_received_packet_and_images(packet)
                     if "map_state" in packet and isinstance(packet["map_state"], dict):
                         REAL_MAP_STATE = packet["map_state"]
                     if inbound_queue is not None:
@@ -439,7 +602,7 @@ async def telemetry_broadcaster():
                     "radiation_msv": round(0.14 + (0.32 if (step % 30 > 22) else 0.02 * math.sin(t)), 2),
                     "battery": round(max(12.0, 89.5 - (step * 0.05) % 80), 1),
                     "imu": {
-                        "yaw": round(12.4 + 25 * math.sin(t * 0.2), 1),
+                        "yaw": 12.4,
                         "pitch": round(-1.2 + 8 * math.cos(t * 0.25), 1),
                         "roll": round(0.5 + 4 * math.sin(t * 0.3), 1),
                         "accel_mag": round(3.72 + 0.5 * math.sin(t), 2),
@@ -449,13 +612,22 @@ async def telemetry_broadcaster():
         }
 
         # 4. Dron Real CV (Raspberry Pi 4 + RealSense D415 desde carpeta data/)
-        if REAL_D415_FRAMES:
+        if HAS_EXTERNAL_SENSOR_CONNECTED and "drone_cv" in LATEST_INGESTED_PACKETS:
+            drone_packet = LATEST_INGESTED_PACKETS["drone_cv"]
+        elif REAL_D415_FRAMES:
             raw_frame = REAL_D415_FRAMES[(step - 1) % len(REAL_D415_FRAMES)]
+            d_data = dict(raw_frame.get("data", {}))
+            if ACTIVE_ROUTE_WAYPOINTS:
+                if "navigation" not in d_data or not isinstance(d_data["navigation"], dict):
+                    d_data["navigation"] = {}
+                else:
+                    d_data["navigation"] = dict(d_data["navigation"])
+                d_data["navigation"]["route_waypoints_xy_m"] = ACTIVE_ROUTE_WAYPOINTS
             drone_packet = {
                 "node": "drone_cv",
                 "node_id": "drone_cv",
                 "timestamp": now_sec,
-                "data": raw_frame.get("data", {}),
+                "data": d_data,
                 "images": raw_frame.get("images"),
             }
         else:
@@ -501,7 +673,8 @@ async def main():
     print("=========================================================================")
 
     asyncio.create_task(inbound_relay_worker())
-    asyncio.create_task(telemetry_broadcaster())
+    # telemetry_broadcaster() desactivado: el servidor espera datos reales del host externo por el puerto 8766
+    # asyncio.create_task(telemetry_broadcaster())
 
     async with outbound_server, inbound_server:
         await asyncio.gather(

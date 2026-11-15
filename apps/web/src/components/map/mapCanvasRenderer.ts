@@ -85,7 +85,6 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
 
   ctx.save();
 
-  // Fondo circular translúcido
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(10, 20, 35, 0.68)';
@@ -94,7 +93,6 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
   ctx.lineWidth = 1.2;
   ctx.stroke();
 
-  // Marcas graduadas alrededor de la brújula
   for (let a = 0; a < 360; a += 15) {
     const rad = (a * Math.PI) / 180;
     const inner = a % 90 === 0 ? r - 6 : r - 3.5;
@@ -106,7 +104,6 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
     ctx.stroke();
   }
 
-  // Líneas de cruz suaves
   ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
   ctx.lineWidth = 0.8;
   ctx.beginPath();
@@ -134,13 +131,11 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
   ctx.fillStyle = '#38bdf8';
   ctx.fill();
 
-  // Centro blanco
   ctx.beginPath();
   ctx.arc(cx, cy, 2, 0, Math.PI * 2);
   ctx.fillStyle = '#e2e8f0';
   ctx.fill();
 
-  // Letras cardinales N, E, S, W
   ctx.font = 'bold 9px "Inter", "Segoe UI", sans-serif';
   ctx.fillStyle = '#f8fafc';
   ctx.textAlign = 'center';
@@ -186,6 +181,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     loadedImg,
     mapLayerMode,
     showContours,
+    showDetectedZones,
     showD415GridOverlay,
     safeRoute,
     targetPoint,
@@ -244,8 +240,34 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     ctx.restore();
   }
 
-  // 3. Curvas Topográficas (Marching Squares, al presionar el botón del ojo)
+  // 3. Al activar el botón del Ojo (showContours):
+  //    - Segmentación AI4Mars (Bedrock, Soil, Sand, Big Rock) + Mapa de Costos de Cuadrícula
+  //    - Curvas de Nivel del DEM MOLA / HiRISE (Marching Squares)
   if (showContours && mapLayerMode !== 'pure_d415_grid') {
+    ctx.save();
+    for (let r = 0; r < gridRows; r++) {
+      for (let c = 0; c < gridCols; c++) {
+        const cls = visionData.ai4marsGrid?.[r]?.[c] ?? 0;
+        const x0 = c * cellW;
+        const y0 = r * cellH;
+        if (cls === 3) {
+          // Big Rock / Pared de cráter / Escarpe
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
+          ctx.fillRect(x0, y0, cellW + 0.5, cellH + 0.5);
+        } else if (cls === 2) {
+          // Sand / Duna deslizante
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.19)';
+          ctx.fillRect(x0, y0, cellW + 0.5, cellH + 0.5);
+        } else if (cls === 1) {
+          // Bedrock (Roca madre estable)
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+          ctx.fillRect(x0, y0, cellW + 0.5, cellH + 0.5);
+        }
+      }
+    }
+    ctx.restore();
+
+    // Curvas de nivel MOLA / HiRISE
     const levels: number[] = [];
     for (
       let lvl = Math.ceil(dataset.minElevation);
@@ -337,7 +359,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     });
   }
 
-  // 4. Gran círculo morado de escaneo en el centro del mapa + pin morado central (tal cual el boceto)
+  // 4. Gran círculo morado de escaneo en el centro del mapa + pin morado central
   const scanCenterX = width * 0.42;
   const scanCenterY = height * 0.49;
   const scanRadiusPx = Math.min(width, height) * 0.34;
@@ -345,13 +367,12 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.save();
   ctx.beginPath();
   ctx.arc(scanCenterX, scanCenterY, scanRadiusPx, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(168, 85, 247, 0.27)';
+  ctx.fillStyle = 'rgba(168, 85, 247, 0.25)';
   ctx.fill();
   ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Pin de ubicación morado en el centro del círculo de escaneo
   const pinX = scanCenterX;
   const pinY = scanCenterY;
   const pinR = 7.5;
@@ -376,7 +397,81 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.fill();
   ctx.restore();
 
-  // 5. Zona roja de riesgo/cráter (como en el boceto junto a Ma'adim Vallis + obstáculos críticos cercanos a la ruta)
+  // 5. Cráteres verificados (siempre visibles, sólo el contorno exacto del cráter).
+  //    Máscaras SAM, escarpes y anillos de margen de seguridad sólo con el botón del Ojo.
+  if (showDetectedZones || showContours) {
+    ctx.save();
+
+    if (showContours && visionData.samMasks) {
+      visionData.samMasks.forEach((mask) => {
+        if (mask.polygon.length < 3) return;
+        ctx.beginPath();
+        mask.polygon.forEach(([mx, my], idx) => {
+          const px = (mx / dataset.widthMeters) * width;
+          const py = (my / dataset.heightMeters) * height;
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+        ctx.fill();
+        ctx.setLineDash([3, 2]);
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.78)';
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+      });
+    }
+
+    visionData.detectedObstacles.forEach((obs) => {
+      if (obs.detector !== 'HoughCircles') return;
+      const cx = (obs.x / dataset.widthMeters) * width;
+      const cy = (obs.y / dataset.heightMeters) * height;
+      // Elipse en coordenadas de canvas: así el contorno coincide con el cráter
+      // aunque el canvas no tenga la misma proporción que la imagen.
+      const rx = (obs.radius / dataset.widthMeters) * width;
+      const ry = ((obs.radiusY ?? obs.radius) / dataset.heightMeters) * height;
+
+      if (showContours) {
+        const k = (obs.safetyRadius ?? obs.radius * 1.5) / obs.radius;
+        ctx.beginPath();
+        ctx.setLineDash([2, 4]);
+        ctx.ellipse(cx, cy, rx * k, ry * k, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
+        ctx.lineWidth = 1.0;
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.setLineDash([]);
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.10)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(248, 113, 113, 0.85)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    });
+
+    if (showContours && visionData.escarpmentSegments) {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.78)';
+      ctx.lineWidth = 1.6;
+      visionData.escarpmentSegments.forEach((seg) => {
+        if (seg.points.length < 2) return;
+        ctx.beginPath();
+        seg.points.forEach(([sx, sy], idx) => {
+          const px = (sx / dataset.widthMeters) * width;
+          const py = (sy / dataset.heightMeters) * height;
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      });
+    }
+
+    ctx.restore();
+  }
+
+  // 6. Zona roja principal de riesgo junto a Ma'adim Vallis
   const endPt = safeRoute.points[safeRoute.points.length - 1] ?? targetPoint;
   const hazardPx = width * 0.51;
   const hazardPy = height * 0.36;
@@ -397,12 +492,14 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.fill();
   ctx.restore();
 
-  // 6. Nombres geográficos sutiles del mapa marciano
+  // 7. Nombres geográficos del mapa marciano
   drawRegionLabels(ctx, width, height);
 
-  // 7. Ruta Segura punteada en verde entre EVA_01 y Destino
+  // 8. Ruta Segura con A* + Corredor de Margen de Seguridad Generoso
   if (safeRoute.points.length > 1) {
     ctx.save();
+
+    // Banda translúcida que representa el margen de seguridad generoso a lo largo de la ruta A*
     ctx.beginPath();
     safeRoute.points.forEach(([rx, ry], idx) => {
       const px = (rx / dataset.widthMeters) * width;
@@ -410,13 +507,27 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
       if (idx === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     });
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.lineWidth = 4.5;
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.16)';
+    ctx.lineWidth = 14;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    ctx.stroke();
+
+    // Sombra de contraste de la línea central A*
+    ctx.beginPath();
+    safeRoute.points.forEach(([rx, ry], idx) => {
+      const px = (rx / dataset.widthMeters) * width;
+      const py = (ry / dataset.heightMeters) * height;
+      if (idx === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.48)';
+    ctx.lineWidth = 4.5;
     ctx.setLineDash([6, 6]);
     ctx.stroke();
 
+    // Trazo verde punteado de la Ruta A*
     ctx.beginPath();
     safeRoute.points.forEach(([rx, ry], idx) => {
       const px = (rx / dataset.widthMeters) * width;
@@ -431,7 +542,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     ctx.restore();
   }
 
-  // 8. Marcador EVA_01 (círculo cian con centro oscuro + texto limpio "EVA_01")
+  // 9. Marcador EVA_01
   const startPt = safeRoute.points[0] ?? evaPos;
   const evaPx = (startPt[0] / dataset.widthMeters) * width;
   const evaPy = (startPt[1] / dataset.heightMeters) * height;
@@ -453,7 +564,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.fillText('EVA_01', evaPx + 11, evaPy + 1);
   ctx.restore();
 
-  // 9. Marcador Destino (círculo naranja/ámbar con centro oscuro + texto limpio "Destino")
+  // 10. Marcador Destino
   const targetPx = (endPt[0] / dataset.widthMeters) * width;
   const targetPy = (endPt[1] / dataset.heightMeters) * height;
 
@@ -474,7 +585,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   ctx.fillText('Destino', targetPx + 11, targetPy + 1);
   ctx.restore();
 
-  // 10. Cinta superior de rumbo y brújula superior derecha
+  // 11. Cinta superior de rumbo y brújula superior derecha
   drawHeadingTape(ctx, width);
   drawCompassRose(ctx, width);
 }

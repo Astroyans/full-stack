@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   connectBackbone,
   evaluateRisk,
+  sendRouteRequest,
   setBackboneUrl,
   useBackbone,
 } from '@martian/shared';
@@ -54,6 +55,26 @@ export default function App() {
   const terrainDataset = buildTopographicDataset(activeDroneSource);
   const risk = evaluateRisk(eva?.data, activeDroneSource as any);
 
+  const handleTargetSelect = async (targetMeters: [number, number]) => {
+    const [mapX, mapY] = targetMeters;
+    const y_m = Number(((mapX - 1.5) / 1.45).toFixed(2));
+    const x_m = Number(((mapY - 5.4) / 1.45).toFixed(2));
+
+    const targetPayload = {
+      x_m,
+      y_m,
+      map_x_m: mapX,
+      map_y_m: mapY,
+    };
+
+    const currentRoverPose = activeDroneSource?.navigation?.rover_pose;
+    const originPayload = currentRoverPose
+      ? { x_m: currentRoverPose.x_m, y_m: currentRoverPose.y_m }
+      : { x_m: 0.0, y_m: 0.0 };
+
+    await sendRouteRequest(targetPayload, originPayload, customUrls[mode]);
+  };
+
   return (
     <div
       style={{
@@ -77,6 +98,7 @@ export default function App() {
         onSwitchMode={handleSwitchMode}
         onChangeUrl={(newUrl) => setCustomUrls({ ...customUrls, [mode]: newUrl })}
         onApplyUrl={handleApplyUrl}
+        onTargetSelect={handleTargetSelect}
       />
     </div>
   );

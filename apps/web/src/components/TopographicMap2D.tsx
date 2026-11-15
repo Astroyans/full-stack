@@ -14,10 +14,12 @@ import {
   fuseVisionWithD415Data,
   ImageVisionAnalysis,
   MartianTerrainDataset,
+  OpenCvPrecomputedPayload,
   OperationMode,
   sampleMatrixAt,
 } from '../config/connectionConfig';
 import { MapLayerMode, renderTopographicMapCanvas } from './map/mapCanvasRenderer';
+import { d415MetersToMapMeters } from '../utils/imageVision';
 
 interface TopographicMap2DProps {
   dataset: MartianTerrainDataset;
@@ -32,6 +34,7 @@ interface TopographicMap2DProps {
   onSwitchMode?: (newMode: OperationMode) => void;
   onChangeUrl?: (newUrl: string) => void;
   onApplyUrl?: () => void;
+  onTargetSelect?: (targetMeters: [number, number]) => void;
 }
 
 const GRID_COLS = 96;
@@ -445,6 +448,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   onSwitchMode,
   onChangeUrl,
   onApplyUrl,
+  onTargetSelect,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -455,6 +459,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
   const [baseVisionData, setBaseVisionData] = useState<ImageVisionAnalysis | null>(null);
   const [localMapState, setLocalMapState] = useState<RealMapStatePayload | null>(null);
+  const [openCvPayload, setOpenCvPayload] = useState<OpenCvPrecomputedPayload | null>(null);
 
   const showContours = mapLayerMode === 'topo_lines';
   const [showDetectedZones] = useState<boolean>(true);
@@ -463,6 +468,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
   // Ubicaciones iniciales alineadas con la composición del boceto (EVA_01 y Destino dentro del círculo morado)
   const [targetPoint, setTargetPoint] = useState<[number, number]>([4.45, 2.75]);
+  const [hasUserSelectedTarget, setHasUserSelectedTarget] = useState<boolean>(false);
   const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
 
@@ -480,6 +486,15 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
         }
       })
       .catch(() => {});
+
+    fetch('/data/opencv_craters.json')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cv) => {
+        if (cv && Array.isArray(cv.craters_hough)) {
+          setOpenCvPayload(cv);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const activeMapState: RealMapStatePayload | null = droneData?.map_state ?? localMapState;
@@ -490,10 +505,16 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     img.src = imageSrc;
     img.onload = () => {
       loadedImgRef.current = img;
-      const analysis = analyzeImageTerrainReal(img, GRID_COLS, GRID_ROWS);
+      const isDefaultMars = imageSrc.includes('mars-terrain');
+      const analysis = analyzeImageTerrainReal(
+        img,
+        GRID_COLS,
+        GRID_ROWS,
+        isDefaultMars ? openCvPayload : null
+      );
       setBaseVisionData(analysis);
     };
-  }, [imageSrc]);
+  }, [imageSrc, openCvPayload]);
 
   const visionData = useMemo(
     () =>
@@ -517,25 +538,94 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
   const basePos: [number, number] = [1.1, 5.8];
   const dronePadPos: [number, number] = FIXED_DRONE_PAD_POS;
-  const evaPos: [number, number] = [
-    Number((3.62 + Math.sin((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
-    Number((5.55 + Math.cos((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
-  ];
-
+  // Posición de inicio fija y estable para evitar que la línea tiemble o se mueva sola
+  const evaPos: [number, number] = [3.62, 5.55];
   const startPoint: [number, number] = evaPos;
 
   const safeRoute = useMemo(() => {
-    if (!visionData) {
+    // Si NO hay host conectado, no trazamos ninguna línea falsa ni recta; indicamos NO HOST
+    if (!isConnected) {
       return {
-        points: [startPoint, targetPoint],
-        distanceMeters: 40,
-        estimatedSeconds: 33,
-        maxSlopeDeg: 18,
-        isCompletelySafe: true,
+        points: [],
+        distanceMeters: 0,
+        estimatedSeconds: 0,
+        maxSlopeDeg: 0,
+        minSafetyMarginMeters: 0,
+        isCompletelySafe: false,
       };
     }
-    return computeSafeRouteFromImageVision(startPoint, targetPoint, visionData, dataset);
-  }, [startPoint[0], startPoint[1], targetPoint[0], targetPoint[1], visionData, dataset]);
+
+    // Si el usuario seleccionó un punto, buscamos la ruta devuelta por el host para ese punto
+    const serverWaypoints = droneData?.navigation?.route_waypoints_xy_m;
+    if (serverWaypoints && serverWaypoints.length > 1) {
+      if (hasUserSelectedTarget) {
+        const lastPt = serverWaypoints[serverWaypoints.length - 1];
+        const mappedLast = d415MetersToMapMeters(lastPt[0], lastPt[1]);
+        const distToTarget = Math.hypot(mappedLast[0] - targetPoint[0], mappedLast[1] - targetPoint[1]);
+        // Solo la dibujamos si los waypoints del host corresponden a la zona solicitada
+        if (distToTarget < 2.0) {
+          const mappedPts: [number, number][] = serverWaypoints.map(([xm, ym]) =>
+            d415MetersToMapMeters(xm, ym)
+          );
+          let dist = 0;
+          for (let i = 1; i < mappedPts.length; i++) {
+            dist += Math.hypot(mappedPts[i][0] - mappedPts[i - 1][0], mappedPts[i][1] - mappedPts[i - 1][1]);
+          }
+          return {
+            points: mappedPts,
+            distanceMeters: Number(dist.toFixed(1)),
+            estimatedSeconds: Math.round(dist / 0.8),
+            maxSlopeDeg: droneData.max_slope_deg || 12.0,
+            minSafetyMarginMeters: 0.5,
+            isCompletelySafe: droneData.safe_path ?? true,
+          };
+        }
+        // Si aún no responde el host con los waypoints de este objetivo, no pintamos línea recta
+        return {
+          points: [],
+          distanceMeters: 0,
+          estimatedSeconds: 0,
+          maxSlopeDeg: 0,
+          minSafetyMarginMeters: 0,
+          isCompletelySafe: false,
+        };
+      }
+
+      // Si no hay clic pero hay ruta inicial del host
+      const mappedPts: [number, number][] = serverWaypoints.map(([xm, ym]) =>
+        d415MetersToMapMeters(xm, ym)
+      );
+      let dist = 0;
+      for (let i = 1; i < mappedPts.length; i++) {
+        dist += Math.hypot(mappedPts[i][0] - mappedPts[i - 1][0], mappedPts[i][1] - mappedPts[i - 1][1]);
+      }
+      return {
+        points: mappedPts,
+        distanceMeters: Number(dist.toFixed(1)),
+        estimatedSeconds: Math.round(dist / 0.8),
+        maxSlopeDeg: droneData.max_slope_deg || 12.0,
+        minSafetyMarginMeters: 0.5,
+        isCompletelySafe: droneData.safe_path ?? true,
+      };
+    }
+
+    // Sin waypoints del host: no pintar línea recta
+    return {
+      points: [],
+      distanceMeters: 0,
+      estimatedSeconds: 0,
+      maxSlopeDeg: 0,
+      minSafetyMarginMeters: 0,
+      isCompletelySafe: false,
+    };
+  }, [
+    isConnected,
+    hasUserSelectedTarget,
+    targetPoint,
+    droneData?.navigation?.route_waypoints_xy_m,
+    droneData?.max_slope_deg,
+    droneData?.safe_path,
+  ]);
 
   const elevationProfile = useMemo(() => {
     if (!visionData || safeRoute.points.length < 2) return [];
@@ -667,6 +757,10 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     const xm = Number((relX * dataset.widthMeters).toFixed(2));
     const ym = Number((relY * dataset.heightMeters).toFixed(2));
     setTargetPoint([xm, ym]);
+    setHasUserSelectedTarget(true);
+    if (onTargetSelect) {
+      onTargetSelect([xm, ym]);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -987,6 +1081,57 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
           {/* Área central del Mapa */}
           <div style={{ position: 'relative', flex: 1, background: '#07101d' }}>
+            {/* Aviso visual flotante de estado de Host y Ruta */}
+            {!isConnected && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(15, 23, 42, 0.94)',
+                  border: '1.5px solid #ef4444',
+                  borderRadius: '20px',
+                  padding: '5px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  zIndex: 8,
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.75)',
+                }}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} />
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#fca5a5', letterSpacing: '0.4px' }}>
+                  NO HOST — ESPERANDO CONEXIÓN Y DATOS
+                </span>
+              </div>
+            )}
+
+            {isConnected && hasUserSelectedTarget && safeRoute.points.length === 0 && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(15, 23, 42, 0.94)',
+                  border: '1.5px solid #f59e0b',
+                  borderRadius: '20px',
+                  padding: '5px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  zIndex: 8,
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.75)',
+                }}
+              >
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} />
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#fde68a', letterSpacing: '0.4px' }}>
+                  ESPERANDO RUTA CALCULADA POR EL HOST...
+                </span>
+              </div>
+            )}
+
             <canvas
               ref={canvasRef}
               width={920}
@@ -1389,11 +1534,29 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
             >
               Elevación
             </div>
-            {elevationProfile.length >= 2 ? (
+            {!isConnected ? (
+              <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+                <div style={{ color: '#ef4444', fontWeight: 700, fontSize: '13px', marginBottom: '4px' }}>
+                  ● NO HOST
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.35 }}>
+                  Sin conexión con el host. Esperando datos externos para calcular ruta.
+                </div>
+              </div>
+            ) : elevationProfile.length >= 2 ? (
               <ElevationChart profile={elevationProfile} maxSlopeDeg={maxRouteSlopeDeg} />
+            ) : hasUserSelectedTarget ? (
+              <div style={{ textAlign: 'center', padding: '16px 8px' }}>
+                <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: '12px', marginBottom: '4px' }}>
+                  ● ESPERANDO RUTA
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.35 }}>
+                  Destino enviado al host. Esperando waypoints calculados...
+                </div>
+              </div>
             ) : (
               <p style={{ fontSize: '11px', color: '#64748b', textAlign: 'center', margin: '12px 0' }}>
-                Haz clic en el mapa para trazar la ruta.
+                Haz clic en el mapa para marcar el objetivo.
               </p>
             )}
           </div>

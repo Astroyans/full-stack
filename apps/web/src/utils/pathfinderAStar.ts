@@ -6,9 +6,14 @@ export interface SafeRouteResult {
   distanceMeters: number;
   estimatedSeconds: number;
   maxSlopeDeg: number;
+  minSafetyMarginMeters: number;
   isCompletelySafe: boolean;
 }
 
+/**
+ * Si el destino cae sobre un cráter, escarpe o dentro del margen de seguridad generoso,
+ * lo desplaza al nodo seguro (Soil / Bedrock) más cercano fuera del anillo de peligro.
+ */
 export function snapToNearestSafeTerrain(
   pt: [number, number],
   vision: ImageVisionAnalysis
@@ -20,18 +25,21 @@ export function snapToNearestSafeTerrain(
   const c0 = Math.max(0, Math.min(cols, Math.round((pt[0] / 10) * cols)));
   const r0 = Math.max(0, Math.min(rows, Math.round((pt[1] / 10) * rows)));
 
-  if (vision.costGrid[r0][c0] <= 20) return pt;
+  if (vision.costGrid[r0][c0] <= 18 && (vision.safetyBufferGrid?.[r0]?.[c0] ?? 0) < 0.25) {
+    return pt;
+  }
 
   let bestC = c0;
   let bestR = r0;
-  let bestScore = vision.costGrid[r0][c0];
+  let bestScore = vision.costGrid[r0][c0] + (vision.safetyBufferGrid?.[r0]?.[c0] ?? 0) * 60;
 
-  for (let radius = 1; radius <= 7; radius++) {
+  for (let radius = 1; radius <= 9; radius++) {
     for (let dr = -radius; dr <= radius; dr++) {
       for (let dc = -radius; dc <= radius; dc++) {
         const nr = Math.min(rows - 1, Math.max(1, r0 + dr));
         const nc = Math.min(cols - 1, Math.max(1, c0 + dc));
-        const score = vision.costGrid[nr][nc] + Math.hypot(dr, dc) * 2.0;
+        const safetyBuf = vision.safetyBufferGrid?.[nr]?.[nc] ?? 0;
+        const score = vision.costGrid[nr][nc] + safetyBuf * 65 + Math.hypot(dr, dc) * 1.8;
         if (score < bestScore) {
           bestScore = score;
           bestC = nc;
@@ -39,7 +47,7 @@ export function snapToNearestSafeTerrain(
         }
       }
     }
-    if (bestScore <= 15) break;
+    if (bestScore <= 16) break;
   }
 
   return [
@@ -48,6 +56,12 @@ export function snapToNearestSafeTerrain(
   ];
 }
 
+/**
+ * PLANIFICADOR A* SOBRE GRAFO DE CUADRÍCULA 8-CONECTADO CON MAPA DE COSTOS Y MARGEN DE SEGURIDAD GENEROSO:
+ * - Pondera las 4 clases de AI4Mars (Bedrock < Soil << Sand <<< Big Rock/Cráter)
+ * - Incorpora diferencia de elevación del DEM MOLA/HiRISE
+ * - Respeta un margen de seguridad generoso (`safetyBufferGrid`) alrededor de cada cráter (SAM+Hough) y escarpe (Canny+Morfología)
+ */
 export function computeSafeRouteFromImageVision(
   rawStart: [number, number],
   rawGoal: [number, number],
@@ -62,13 +76,11 @@ export function computeSafeRouteFromImageVision(
       distanceMeters: 10,
       estimatedSeconds: 8,
       maxSlopeDeg: 5,
+      minSafetyMarginMeters: 0.45,
       isCompletelySafe: true,
     };
   }
 
-  // El inicio siempre sale exacto de la posición real (EVA/Base): no se ajusta aunque
-  // esa celda tenga riesgo, para que la línea de la ruta se vea saliendo del astronauta.
-  // El destino sí se ajusta a la celda segura más cercana si el clic cae sobre una zona de peligro.
   const start = rawStart;
   const goal = snapToNearestSafeTerrain(rawGoal, vision);
 
@@ -86,13 +98,20 @@ export function computeSafeRouteFromImageVision(
   const [gc, gr] = toGrid(goal[0], goal[1]);
   const key = (c: number, r: number) => `${c},${r}`;
 
+  // Heurística Octile para grafo de cuadrícula de 8 direcciones
+  const octileHeuristic = (c1: number, r1: number, c2: number, r2: number): number => {
+    const dx = Math.abs(c1 - c2);
+    const dy = Math.abs(r1 - r2);
+    return dx + dy + (Math.SQRT2 - 2) * Math.min(dx, dy);
+  };
+
   const openSet = new Set<string>([key(sc, sr)]);
   const cameFrom = new Map<string, [number, number]>();
   const gScore = new Map<string, number>();
   const fScore = new Map<string, number>();
 
   gScore.set(key(sc, sr), 0);
-  fScore.set(key(sc, sr), Math.hypot(gc - sc, gr - sr));
+  fScore.set(key(sc, sr), octileHeuristic(sc, sr, gc, gr));
 
   const dirs: Array<[number, number, number]> = [
     [1, 0, 1],
@@ -106,7 +125,7 @@ export function computeSafeRouteFromImageVision(
   ];
 
   let iterations = 0;
-  while (openSet.size > 0 && iterations < 8000) {
+  while (openSet.size > 0 && iterations < 8500) {
     iterations++;
     let currentKey = '';
     let lowestF = Infinity;
@@ -133,8 +152,10 @@ export function computeSafeRouteFromImageVision(
       const nextZ = vision.elevationGrid[nr][nc];
       const deltaZ = Math.abs(nextZ - curZ);
 
+      // Costo del mapa (AI4Mars + pendiente MOLA/HiRISE + margen de seguridad generoso)
       const pixelHazardCost = vision.costGrid[nr][nc];
-      const moveCost = stepCost + deltaZ * 2.5 + pixelHazardCost * 0.55;
+      const safetyPenalty = (vision.safetyBufferGrid?.[nr]?.[nc] ?? 0) * 42;
+      const moveCost = stepCost + deltaZ * 2.8 + pixelHazardCost * 0.58 + safetyPenalty;
 
       const tentativeG = currentG + moveCost;
       const nKey = key(nc, nr);
@@ -142,7 +163,7 @@ export function computeSafeRouteFromImageVision(
       if (tentativeG < (gScore.get(nKey) ?? Infinity)) {
         cameFrom.set(nKey, [cc, cr]);
         gScore.set(nKey, tentativeG);
-        fScore.set(nKey, tentativeG + Math.hypot(gc - nc, gr - nr) * 0.95);
+        fScore.set(nKey, tentativeG + octileHeuristic(nc, nr, gc, gr) * 0.96);
         openSet.add(nKey);
       }
     }
@@ -159,6 +180,7 @@ export function computeSafeRouteFromImageVision(
   rawPoints.push(start);
   rawPoints.reverse();
 
+  // Suavizado preservando el margen de seguridad (no acerca la curva hacia obstáculos)
   let smoothed = rawPoints;
   for (let pass = 0; pass < 2; pass++) {
     const next: Array<[number, number]> = [];
@@ -169,10 +191,19 @@ export function computeSafeRouteFromImageVision(
         const prev = smoothed[i - 1];
         const cur = smoothed[i];
         const nxt = smoothed[i + 1];
-        next.push([
-          Number(((prev[0] + cur[0] * 2 + nxt[0]) / 4).toFixed(2)),
-          Number(((prev[1] + cur[1] * 2 + nxt[1]) / 4).toFixed(2)),
-        ]);
+        const candX = Number(((prev[0] + cur[0] * 2 + nxt[0]) / 4).toFixed(2));
+        const candY = Number(((prev[1] + cur[1] * 2 + nxt[1]) / 4).toFixed(2));
+        const candSafety = vision.safetyBufferGrid
+          ? sampleMatrixAt(candX, candY, vision.safetyBufferGrid)
+          : 0;
+        const curSafety = vision.safetyBufferGrid
+          ? sampleMatrixAt(cur[0], cur[1], vision.safetyBufferGrid)
+          : 0;
+        if (candSafety <= curSafety + 0.12) {
+          next.push([candX, candY]);
+        } else {
+          next.push(cur);
+        }
       }
     }
     smoothed = next;
@@ -180,6 +211,8 @@ export function computeSafeRouteFromImageVision(
 
   let totalDist = 0;
   let maxSlope = 0;
+  let minClearance = 1.5;
+
   for (let i = 1; i < smoothed.length; i++) {
     const [x1, y1] = smoothed[i - 1];
     const [x2, y2] = smoothed[i];
@@ -191,6 +224,11 @@ export function computeSafeRouteFromImageVision(
     const climbDeg = (Math.atan2(Math.abs(z2 - z1) * 0.38, stepMeters) * 180) / Math.PI;
     const s = Math.max(sampleMatrixAt(x2, y2, vision.slopeGrid) * 0.85, climbDeg);
     if (s > maxSlope) maxSlope = s;
+
+    for (const obs of vision.detectedObstacles) {
+      const clearance = Math.max(0.08, Math.hypot(x2 - obs.x, y2 - obs.y) - obs.radius);
+      if (clearance < minClearance) minClearance = clearance;
+    }
   }
 
   const distanceMeters = Number((totalDist * 10).toFixed(1));
@@ -201,7 +239,7 @@ export function computeSafeRouteFromImageVision(
     distanceMeters,
     estimatedSeconds,
     maxSlopeDeg: Number(Math.min(35, Math.max(4, maxSlope)).toFixed(1)),
-    isCompletelySafe: true,
+    minSafetyMarginMeters: Number(Math.max(0.32, Math.min(1.2, minClearance)).toFixed(2)),
+    isCompletelySafe: maxSlope < 23,
   };
 }
-

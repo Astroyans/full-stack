@@ -19,6 +19,7 @@ import {
   buildElevationProfile,
   buildMergedObstacles,
   computeIpadSafeRouteAStar,
+  DEFAULT_MARS_ESCARPMENTS,
   ElevPoint,
   OperationMode,
 } from '../utils/ipadMapEngine';
@@ -841,7 +842,67 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
               </Text>
             ))}
 
-            {/* Ruta Segura punteada en verde entre EVA_01 y Destino */}
+            {/* Detecciones SAM + OpenCV (HoughCircles + Máscaras SAM + Escarpes Canny/Morfología) */}
+            {obstacles.map((crater) => {
+              const cx = toPxX(crater.x);
+              const cy = toPxY(crater.y);
+              const rPx = Math.max(10, (crater.radius / 10) * mapSize.width);
+              const isSam = crater.detector === 'SAM+OpenCV';
+              return (
+                <View
+                  key={crater.id}
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: cx - rPx,
+                    top: cy - rPx,
+                    width: rPx * 2,
+                    height: rPx * 2,
+                    borderRadius: isSam ? rPx * 0.72 : rPx,
+                    borderWidth: 1.3,
+                    borderStyle: 'dashed',
+                    borderColor: isSam
+                      ? 'rgba(251, 191, 36, 0.78)'
+                      : 'rgba(248, 113, 113, 0.76)',
+                    backgroundColor: isSam
+                      ? 'rgba(245, 158, 11, 0.15)'
+                      : 'rgba(239, 68, 68, 0.13)',
+                  }}
+                />
+              );
+            })}
+
+            {DEFAULT_MARS_ESCARPMENTS.map((esc) =>
+              esc.points.map((pt, idx) => {
+                if (idx === 0) return null;
+                const prev = esc.points[idx - 1];
+                const x1 = toPxX(prev[0]);
+                const y1 = toPxY(prev[1]);
+                const x2 = toPxX(pt[0]);
+                const y2 = toPxY(pt[1]);
+                const length = Math.hypot(x2 - x1, y2 - y1);
+                const angleRad = Math.atan2(y2 - y1, x2 - x1);
+                const cx = (x1 + x2) / 2;
+                const cy = (y1 + y2) / 2;
+                return (
+                  <View
+                    key={`${esc.id}-${idx}`}
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: cx - length / 2,
+                      top: cy - 1.2,
+                      width: length,
+                      height: 2.0,
+                      backgroundColor: 'rgba(56, 189, 248, 0.78)',
+                      transform: [{ rotate: `${angleRad}rad` }],
+                    }}
+                  />
+                );
+              })
+            )}
+
+            {/* Ruta Segura con A* + Corredor de Margen de Seguridad Generoso */}
             {safeRoute.points.map((pt, idx) => {
               if (idx === 0) return null;
               const prev = safeRoute.points[idx - 1];
@@ -855,20 +916,34 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
               const cy = (y1 + y2) / 2;
 
               return (
-                <View
-                  key={`seg-${idx}`}
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: cx - length / 2,
-                    top: cy - 1.3,
-                    width: length * 0.72,
-                    height: 2.6,
-                    backgroundColor: '#4ade80',
-                    borderRadius: 1.5,
-                    transform: [{ rotate: `${angleRad}rad` }],
-                  }}
-                />
+                <React.Fragment key={`seg-${idx}`}>
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: cx - length / 2,
+                      top: cy - 6,
+                      width: length,
+                      height: 12,
+                      backgroundColor: 'rgba(52, 211, 153, 0.14)',
+                      borderRadius: 6,
+                      transform: [{ rotate: `${angleRad}rad` }],
+                    }}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: cx - length / 2,
+                      top: cy - 1.3,
+                      width: length * 0.72,
+                      height: 2.6,
+                      backgroundColor: '#4ade80',
+                      borderRadius: 1.5,
+                      transform: [{ rotate: `${angleRad}rad` }],
+                    }}
+                  />
+                </React.Fragment>
               );
             })}
 

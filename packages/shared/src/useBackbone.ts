@@ -8,7 +8,7 @@ import {
   TelemetryEnvelope,
 } from './types';
 import { extractDataFromEnvelope, isStale, STALE_TIMEOUT_MS } from './normalizers';
-import { resolveServerEndpoints } from './networkClient';
+import { resolveServerEndpoints, pushToInboundPort } from './networkClient';
 
 declare const process: any;
 declare const window: any;
@@ -309,3 +309,42 @@ export function disconnectBackbone() {
 export function useBackbone() {
   return useBackboneStore();
 }
+
+/**
+ * Envía un mensaje JSON a través del WebSocket de Backbone activo (Puerto 8765).
+ */
+export function sendBackboneMessage(payload: Record<string, any>): boolean {
+  if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+    try {
+      activeSocket.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Solicita una ruta al servicio externo enviando el punto objetivo estrictamente en METROS.
+ * Intenta primero vía WebSocket directo (8765) y como respaldo vía HTTP POST (8766).
+ */
+export async function sendRouteRequest(
+  target: { x_m: number; y_m: number; [key: string]: any },
+  origin?: { x_m: number; y_m: number; [key: string]: any },
+  serverUrl?: string
+): Promise<boolean> {
+  const payload = {
+    action: 'request_route',
+    unit: 'meters',
+    target,
+    origin,
+    timestamp: Date.now(),
+  };
+
+  const sentWs = sendBackboneMessage(payload);
+  if (sentWs) return true;
+
+  return pushToInboundPort(payload, serverUrl || getBackboneUrl());
+}
+
