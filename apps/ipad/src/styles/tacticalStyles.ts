@@ -268,6 +268,7 @@ export const tacticalStyles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     top: 0,
+    resizeMode: 'stretch',
   },
   mapTintOverlay: {
     position: 'absolute',
@@ -550,6 +551,7 @@ export const tacticalStyles = StyleSheet.create({
     borderRadius: 6,
     paddingVertical: 9,
     paddingHorizontal: 11,
+    marginBottom: 8,
   },
   alertCardTopRow: {
     flexDirection: 'row',

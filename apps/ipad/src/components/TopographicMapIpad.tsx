@@ -313,7 +313,7 @@ const ElevationChartIpad: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }
             width: 44,
             justifyContent: 'space-between',
             paddingVertical: 4,
-            paddingRight: 4,
+            paddingRight: 6,
             alignItems: 'flex-end',
           }}
         >
@@ -330,30 +330,67 @@ const ElevationChartIpad: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }
             borderColor: 'rgba(148, 163, 184, 0.45)',
             flexDirection: 'row',
             alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            paddingHorizontal: 2,
-            paddingTop: 14,
+            paddingHorizontal: 0,
+            paddingTop: 16,
             position: 'relative',
+            overflow: 'hidden',
           }}
         >
-          <Text
+          {/* Líneas de cuadrícula sutiles */}
+          <View
+            style={{
+              position: 'absolute',
+              top: '33%',
+              left: 0,
+              right: 0,
+              borderBottomWidth: 1,
+              borderColor: 'rgba(148, 163, 184, 0.12)',
+            }}
+          />
+          <View
+            style={{
+              position: 'absolute',
+              top: '66%',
+              left: 0,
+              right: 0,
+              borderBottomWidth: 1,
+              borderColor: 'rgba(148, 163, 184, 0.12)',
+            }}
+          />
+
+          {/* Etiqueta de pendiente máxima en el pico */}
+          <View
             style={{
               position: 'absolute',
               top: 2,
-              left: 6,
-              fontSize: 8,
-              fontWeight: '700',
-              color: '#ef4444',
-              fontFamily: 'monospace',
+              left: `${Math.max(6, Math.min(68, (peakIdx / Math.max(1, profile.length - 1)) * 100))}%`,
+              backgroundColor: 'rgba(8, 10, 15, 0.85)',
+              paddingHorizontal: 4,
+              paddingVertical: 1,
+              borderRadius: 3,
+              borderWidth: 0.8,
+              borderColor: 'rgba(239, 68, 68, 0.5)',
+              zIndex: 10,
             }}
           >
-            Pendiente máx: {maxSlopeDeg}°
-          </Text>
+            <Text
+              style={{
+                fontSize: 8,
+                fontWeight: '700',
+                color: '#ef4444',
+                fontFamily: 'monospace',
+              }}
+            >
+              Pendiente máx: {maxSlopeDeg.toFixed(1)}°
+            </Text>
+          </View>
 
           {profile.map((pt, idx) => {
             const norm = Math.max(0.08, (pt.elev - minE) / span);
             const barH = Math.round(norm * 78);
             const isPeak = idx === peakIdx;
+            const isEva = idx === Math.round(profile.length * 0.42);
+            const isDest = idx === Math.round(profile.length * 0.88);
 
             return (
               <View
@@ -363,25 +400,57 @@ const ElevationChartIpad: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }
                   alignItems: 'center',
                   justifyContent: 'flex-end',
                   height: '100%',
+                  position: 'relative',
                 }}
               >
                 {isPeak && (
                   <View
                     style={{
+                      position: 'absolute',
+                      bottom: barH - 3,
                       width: 6,
                       height: 6,
                       borderRadius: 3,
                       backgroundColor: '#ef4444',
                       borderWidth: 1,
                       borderColor: '#080a0f',
-                      marginBottom: -3,
-                      zIndex: 4,
+                      zIndex: 8,
+                    }}
+                  />
+                )}
+                {isEva && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      bottom: barH - 2,
+                      width: 5,
+                      height: 5,
+                      borderRadius: 2.5,
+                      backgroundColor: '#38bdf8',
+                      borderWidth: 0.8,
+                      borderColor: '#080a0f',
+                      zIndex: 7,
+                    }}
+                  />
+                )}
+                {isDest && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      bottom: barH - 2,
+                      width: 5,
+                      height: 5,
+                      borderRadius: 2.5,
+                      backgroundColor: '#f59e0b',
+                      borderWidth: 0.8,
+                      borderColor: '#080a0f',
+                      zIndex: 7,
                     }}
                   />
                 )}
                 <View
                   style={{
-                    width: '84%',
+                    width: '100%',
                     height: barH,
                     backgroundColor: 'rgba(56, 189, 248, 0.28)',
                     borderTopWidth: 2,
@@ -826,7 +895,7 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
               onLongPress={handleMapLongPress}
               style={styles.mapPressable}
             >
-              <Image source={MARS_IMG} style={styles.mapBackgroundImage} resizeMode="cover" />
+              <Image source={MARS_IMG} style={styles.mapBackgroundImage} resizeMode="stretch" />
               <View style={styles.mapTintOverlay} />
 
               {/* Botón superior izquierdo: LEYENDA */}
@@ -1070,31 +1139,76 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
                 </Text>
               ))}
 
-              {/* Cráteres verificados en anillos rojos limpios */}
+              {/* Cráteres verificados en elipses tácticas exactas con mira central */}
               {showCraters &&
-                obstacles.map((crater) => {
+                obstacles.map((crater, idx) => {
                   if (crater.detector !== 'HoughCircles') return null;
                   const cx = toPxX(crater.x);
                   const cy = toPxY(crater.y);
-                  const rx = Math.max(8, (crater.radius / 10) * mapSize.width);
-                  const ry = Math.max(8, ((crater.radiusY ?? crater.radius) / 10) * mapSize.height);
+                  const rx = Math.max(6, (crater.radius / 10) * mapSize.width);
+                  const ry = Math.max(6, ((crater.radiusY ?? crater.radius) / 10) * mapSize.height);
+                  const scaleY = ry / rx;
 
                   return (
-                    <View
-                      key={crater.id}
-                      pointerEvents="none"
-                      style={{
-                        position: 'absolute',
-                        left: cx - rx,
-                        top: cy - ry,
-                        width: rx * 2,
-                        height: ry * 2,
-                        borderRadius: rx,
-                        borderWidth: 1.3,
-                        borderColor: 'rgba(248, 113, 113, 0.82)',
-                        backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                      }}
-                    />
+                    <React.Fragment key={crater.id}>
+                      {/* Elipse táctica matemáticamente perfecta (círculo escalado uniformemente en Y) */}
+                      <View
+                        pointerEvents="none"
+                        style={{
+                          position: 'absolute',
+                          left: cx - rx,
+                          top: cy - rx,
+                          width: rx * 2,
+                          height: rx * 2,
+                          borderRadius: rx,
+                          borderWidth: 1.2,
+                          borderStyle: 'dashed',
+                          borderColor: 'rgba(248, 113, 113, 0.85)',
+                          backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                          transform: [{ scaleY: scaleY }],
+                        }}
+                      />
+
+                      {/* Mira central táctica de precisión (+) */}
+                      <View
+                        pointerEvents="none"
+                        style={{
+                          position: 'absolute',
+                          left: cx - 4,
+                          top: cy - 0.5,
+                          width: 8,
+                          height: 1,
+                          backgroundColor: 'rgba(248, 113, 113, 0.95)',
+                        }}
+                      />
+                      <View
+                        pointerEvents="none"
+                        style={{
+                          position: 'absolute',
+                          left: cx - 0.5,
+                          top: cy - 4,
+                          width: 1,
+                          height: 8,
+                          backgroundColor: 'rgba(248, 113, 113, 0.95)',
+                        }}
+                      />
+
+                      {/* Etiqueta militar HC-XX con pendiente en grados */}
+                      <Text
+                        pointerEvents="none"
+                        style={{
+                          position: 'absolute',
+                          left: cx + rx + 3,
+                          top: cy - 6,
+                          fontSize: 7.5,
+                          fontWeight: '700',
+                          color: '#f87171',
+                          fontFamily: 'monospace',
+                        }}
+                      >
+                        HC-{String(idx + 1).padStart(2, '0')} {crater.slopeDeg.toFixed(0)}°
+                      </Text>
+                    </React.Fragment>
                   );
                 })}
 
@@ -1502,6 +1616,7 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
             </ScrollView>
 
             <View style={styles.detectorFooter}>
+              <View style={{ width: 4.5, height: 4.5, borderRadius: 2.5, backgroundColor: '#38bdf8', opacity: 0.8 }} />
               <Text style={styles.detectorFooterText}>
                 HoughCircles · Canny+Morphology · SAM+OpenCV
               </Text>
