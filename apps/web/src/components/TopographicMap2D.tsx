@@ -461,14 +461,14 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const showD415GridOverlay = false;
   const showServerPaths = false;
 
-  // Ubicaciones iniciales alineadas con la composición del boceto (EVA_01 dentro del círculo morado y Destino arriba a la derecha)
-  const [targetPoint, setTargetPoint] = useState<[number, number]>([8.15, 2.25]);
-  const [showTelemetry, setShowTelemetry] = useState<boolean>(true);
+  // Ubicaciones iniciales alineadas con la composición del boceto (EVA_01 y Destino dentro del círculo morado)
+  const [targetPoint, setTargetPoint] = useState<[number, number]>([4.45, 2.75]);
+  const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
 
   const [hoverCoords, setHoverCoords] = useState<{ lat: string; lon: string }>({
-    lat: '-11.52119',
-    lon: '6.21358°',
+    lat: '-11.49907',
+    lon: '6.20995°',
   });
 
   useEffect(() => {
@@ -518,8 +518,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const basePos: [number, number] = [1.1, 5.8];
   const dronePadPos: [number, number] = FIXED_DRONE_PAD_POS;
   const evaPos: [number, number] = [
-    Number((4.55 + Math.sin((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
-    Number((6.15 + Math.cos((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
+    Number((3.62 + Math.sin((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
+    Number((5.55 + Math.cos((evaYaw * Math.PI) / 180) * 0.08).toFixed(2)),
   ];
 
   const startPoint: [number, number] = evaPos;

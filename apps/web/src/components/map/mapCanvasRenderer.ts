@@ -155,10 +155,10 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
 
 function drawRegionLabels(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   const labels = [
-    { text: 'Dollfus', x: width * 0.21, y: height * 0.59 },
-    { text: "Ma'adim Vallis", x: width * 0.72, y: height * 0.44 },
-    { text: 'Nervoorn', x: width * 0.54, y: height * 0.80 },
-    { text: 'Bachtiaus Vallis', x: width * 0.28, y: height * 0.90 },
+    { text: 'Dollfus', x: width * 0.21, y: height * 0.55 },
+    { text: "Ma'adim Vallis", x: width * 0.55, y: height * 0.41 },
+    { text: 'Nervoorn', x: width * 0.43, y: height * 0.69 },
+    { text: 'Bachtiaus Vallis', x: width * 0.28, y: height * 0.74 },
   ];
 
   ctx.save();
@@ -338,7 +338,7 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   }
 
   // 4. Gran círculo morado de escaneo en el centro del mapa + pin morado central (tal cual el boceto)
-  const scanCenterX = width * 0.53;
+  const scanCenterX = width * 0.42;
   const scanCenterY = height * 0.49;
   const scanRadiusPx = Math.min(width, height) * 0.34;
 
@@ -378,8 +378,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
 
   // 5. Zona roja de riesgo/cráter (como en el boceto junto a Ma'adim Vallis + obstáculos críticos cercanos a la ruta)
   const endPt = safeRoute.points[safeRoute.points.length - 1] ?? targetPoint;
-  const hazardPx = width * 0.67;
-  const hazardPy = height * 0.39;
+  const hazardPx = width * 0.51;
+  const hazardPy = height * 0.36;
   const hazardR = Math.min(width, height) * 0.068;
 
   ctx.save();

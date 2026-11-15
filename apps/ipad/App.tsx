@@ -1,100 +1,76 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, ScrollView, StatusBar, Text, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { SafeAreaView, ScrollView, StatusBar, Vibration } from 'react-native';
 import {
   connectBackbone,
   evaluateRisk,
-  isStale,
   setBackboneUrl,
   useBackbone,
 } from '@martian/shared';
 import { tacticalStyles as styles } from './src/styles/tacticalStyles';
-import { TacticalHeader } from './src/components/TacticalHeader';
-import { VitalSignsGrid } from './src/components/VitalSignsGrid';
-import { SuitImuAndDronePanel } from './src/components/SuitImuAndDronePanel';
-import { RealSenseFeedCard } from './src/components/RealSenseFeedCard';
+import { TopographicMapIpad } from './src/components/TopographicMapIpad';
+import { CONNECTION_MODES, OperationMode } from './src/utils/ipadMapEngine';
 
 export default function App() {
-  const { nodes, isConnected, getEva, getDrone } = useBackbone();
-  const [customIp, setCustomIp] = useState('');
-  const [showConfig, setShowConfig] = useState(false);
+  const { isConnected, getEva, getDrone } = useBackbone();
+
+  const [mode, setMode] = useState<OperationMode>('local_esp');
+  const [customUrls, setCustomUrls] = useState<Record<OperationMode, string>>({
+    local_esp: CONNECTION_MODES.local_esp.defaultWsUrl,
+    online_raspi: CONNECTION_MODES.online_raspi.defaultWsUrl,
+  });
+  const [utcTime, setUtcTime] = useState<string>('');
 
   useEffect(() => {
-    connectBackbone();
+    connectBackbone(customUrls[mode]);
   }, []);
+
+  useEffect(() => {
+    const tick = () => setUtcTime(new Date().toISOString().substring(11, 19));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleSwitchMode = (newMode: OperationMode) => {
+    setMode(newMode);
+    setBackboneUrl(customUrls[newMode]);
+  };
+
+  const handleApplyUrl = () => {
+    setBackboneUrl(customUrls[mode]);
+  };
 
   const eva = getEva();
   const drone = getDrone();
-  const evaData = eva?.data;
-  const droneData = drone?.data;
-
-  const stale = isStale(eva);
-  const risk = evaluateRisk(evaData, droneData);
-
-  useEffect(() => {
-    if (Object.keys(nodes).length > 0) {
-      console.log('[iPad Tactical Terminal] Datos vivos recibidos:', {
-        eva: evaData,
-        drone: droneData,
-      });
-    }
-  }, [nodes]);
+  const evaData = eva?.data ?? null;
+  const droneData = drone?.data ?? null;
+  const risk = evaluateRisk(evaData ?? undefined, droneData ?? undefined);
 
   useEffect(() => {
     if (risk.level === 'red') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Vibration.vibrate([0, 200, 100, 200]);
     } else if (risk.level === 'yellow') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      Vibration.vibrate(120);
     }
   }, [risk.level]);
 
-  const handleUpdateIp = () => {
-    if (customIp.trim()) {
-      setBackboneUrl(customIp.trim());
-      setShowConfig(false);
-    }
-  };
-
-  const getRiskBg = () => {
-    if (stale) return '#374151';
-    if (risk.level === 'red') return '#dc2626';
-    if (risk.level === 'yellow') return '#d97706';
-    return '#16a34a';
-  };
-
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
+      <StatusBar barStyle="light-content" />
 
-      <TacticalHeader
-        stale={stale}
-        isConnected={isConnected}
-        showConfig={showConfig}
-        customIp={customIp}
-        onToggleConfig={() => setShowConfig(!showConfig)}
-        onChangeIp={setCustomIp}
-        onSaveIp={handleUpdateIp}
-      />
-
-      <View style={[styles.riskBanner, { backgroundColor: getRiskBg() }]}>
-        <Text style={styles.riskTitle}>
-          {stale
-            ? 'PÉRDIDA DE TELEMETRÍA (ÚLTIMO ESTADO GUARDADO)'
-            : `ESTADO DE RIESGO: ${risk.level.toUpperCase()}`}
-        </Text>
-        {risk.reasons.length > 0 ? (
-          <Text style={styles.riskDesc}>{risk.reasons.join(' • ')}</Text>
-        ) : (
-          <Text style={styles.riskDesc}>
-            Sistemas nominales. Ruta segura verificada por dron.
-          </Text>
-        )}
-      </View>
-
-      <ScrollView contentContainerStyle={styles.content}>
-        <VitalSignsGrid evaData={evaData} />
-        <SuitImuAndDronePanel evaData={evaData} droneData={droneData} />
-        <RealSenseFeedCard droneData={droneData} />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <TopographicMapIpad
+          droneData={droneData}
+          evaData={evaData}
+          risk={risk}
+          mode={mode}
+          utcTime={utcTime}
+          isConnected={isConnected}
+          customUrls={customUrls}
+          onSwitchMode={handleSwitchMode}
+          onChangeUrl={(newUrl) => setCustomUrls({ ...customUrls, [mode]: newUrl })}
+          onApplyUrl={handleApplyUrl}
+        />
       </ScrollView>
     </SafeAreaView>
   );
