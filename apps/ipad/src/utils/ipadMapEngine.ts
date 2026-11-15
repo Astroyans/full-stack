@@ -1,5 +1,6 @@
 import { NativeModules } from 'react-native';
 import { DroneData, RealMapStatePayload } from '@martian/shared';
+import opencvData from '../../assets/opencv_craters.json';
 
 export type OperationMode = 'local_esp' | 'online_raspi';
 
@@ -45,11 +46,21 @@ export const CONNECTION_MODES: Record<
 
 export const FIXED_DRONE_PAD_POS: [number, number] = [1.5, 5.4];
 
+export interface ScientificStop {
+  id: string;
+  number: number;
+  name: string;
+  objective: string;
+  xm: number;
+  ym: number;
+}
+
 export interface DetectedCraterHazard {
   id: string;
   x: number;
   y: number;
   radius: number;
+  radiusY?: number;
   safetyRadius?: number;
   slopeDeg: number;
   severity: 'low' | 'medium' | 'high';
@@ -68,6 +79,7 @@ export interface SafeRouteResult {
   distanceMeters: number;
   estimatedSeconds: number;
   maxSlopeDeg: number;
+  minSafetyMarginMeters: number;
   isCompletelySafe: boolean;
 }
 
@@ -78,21 +90,22 @@ export interface ElevPoint {
 }
 
 /**
- * Cráteres circulares (OpenCV HoughCircles) y máscaras de cráteres erosionados/solapados (SAM + OpenCV)
- * con margen de seguridad generoso (`safetyRadius`).
+ * Cráteres verificados extraídos de opencv_craters.json (26 cráteres reales sin falsos positivos).
  */
-const DEFAULT_MARS_CRATERS: DetectedCraterHazard[] = [
-  { id: 'hough-crater-1', x: 5.63, y: 7.25, radius: 0.55, safetyRadius: 0.90, slopeDeg: 26.1, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'hough-crater-2', x: 8.10, y: 7.43, radius: 0.54, safetyRadius: 0.88, slopeDeg: 26.5, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'hough-crater-6', x: 3.55, y: 5.64, radius: 0.60, safetyRadius: 0.95, slopeDeg: 24.9, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'hough-crater-7', x: 2.48, y: 3.84, radius: 0.60, safetyRadius: 0.95, slopeDeg: 24.8, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'sam-mask-1', x: 4.72, y: 6.25, radius: 0.60, safetyRadius: 0.98, slopeDeg: 28.4, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
-  { id: 'hough-crater-11', x: 3.66, y: 3.00, radius: 0.59, safetyRadius: 0.94, slopeDeg: 24.9, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'sam-mask-2', x: 6.13, y: 6.23, radius: 0.85, safetyRadius: 1.22, slopeDeg: 31.2, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
-  { id: 'sam-mask-3', x: 4.53, y: 4.65, radius: 0.52, safetyRadius: 0.88, slopeDeg: 26.2, severity: 'high', kind: 'crater_wall', detector: 'SAM+OpenCV' },
-  { id: 'hough-crater-21', x: 5.10, y: 3.60, radius: 0.58, safetyRadius: 0.95, slopeDeg: 32.0, severity: 'high', kind: 'crater_wall', detector: 'HoughCircles' },
-  { id: 'hough-crater-28', x: 2.51, y: 4.79, radius: 0.59, safetyRadius: 0.94, slopeDeg: 24.4, severity: 'medium', kind: 'crater_wall', detector: 'HoughCircles' },
-];
+const VERIFIED_OPENCV_CRATERS: DetectedCraterHazard[] = (
+  (opencvData as any)?.craters_hough ?? []
+).map((c: any) => ({
+  id: c.id,
+  x: Number(c.x),
+  y: Number(c.y),
+  radius: Number(c.radius),
+  radiusY: c.radiusY !== undefined ? Number(c.radiusY) : Number(c.radius),
+  safetyRadius: c.safetyRadius !== undefined ? Number(c.safetyRadius) : Number(c.radius) * 1.5,
+  slopeDeg: Number(c.slopeDeg),
+  severity: c.slopeDeg >= 30 ? 'high' : c.slopeDeg >= 22 ? 'medium' : 'low',
+  kind: 'crater_wall',
+  detector: 'HoughCircles',
+}));
 
 /**
  * Bordes de escarpes detectados con Canny + Cierre Morfológico (Dilatación + Erosión) en OpenCV.
@@ -111,24 +124,27 @@ export function d415MetersToMapMeters(x_m: number, y_m: number): [number, number
 }
 
 export function buildMergedObstacles(droneData?: DroneData | null): DetectedCraterHazard[] {
-  const list: DetectedCraterHazard[] = [...DEFAULT_MARS_CRATERS];
+  const list: DetectedCraterHazard[] = [...VERIFIED_OPENCV_CRATERS];
   const rawObstacles = droneData?.obstacles ?? [];
   rawObstacles.forEach((obs, idx) => {
     const [mx, my] =
       obs.x >= 0 && obs.x <= 10 && obs.y >= 0 && obs.y <= 10
         ? [obs.x, obs.y]
         : d415MetersToMapMeters(obs.x, obs.y);
+    const r = Math.max(0.24, Math.min(0.75, (obs.radius ?? 0.32) * 1.1));
     list.push({
       id: obs.id ? String(obs.id) : `d415-obs-${idx}`,
       x: mx,
       y: my,
-      radius: Math.max(0.28, Math.min(0.85, (obs.radius ?? 0.35) * 1.2)),
-      slopeDeg: obs.severity === 'high' ? 35 : 22,
+      radius: r,
+      safetyRadius: r * 1.5,
+      slopeDeg: obs.severity === 'high' ? 33.5 : 23.0,
       severity:
         obs.severity === 'low' || obs.severity === 'medium' || obs.severity === 'high'
           ? obs.severity
           : 'high',
-      kind: (obs as any).kind,
+      kind: (obs as any).kind ?? 'rock_obstacle',
+      detector: 'SAM+OpenCV',
     });
   });
   return list;
@@ -139,7 +155,7 @@ export function sampleSyntheticElevation(xm: number, ym: number): number {
     26 +
     4.5 * Math.sin(xm * 0.65) * Math.cos(ym * 0.55) +
     2.8 * Math.cos((xm + ym) * 0.45);
-  return Number(Math.max(19, Math.min(40, base)).toFixed(1));
+  return Number(Math.max(19, Math.min(40, base)).toFixed(2));
 }
 
 export function sampleSyntheticSlope(
@@ -150,23 +166,31 @@ export function sampleSyntheticSlope(
   let slope = 8.5 + 5.5 * Math.abs(Math.sin(xm * 0.8 - ym * 0.6));
   for (const obs of obstacles) {
     const d = Math.hypot(xm - obs.x, ym - obs.y);
-    if (d < obs.radius * 1.35) {
-      const factor = 1 - d / (obs.radius * 1.35);
+    const safeR = obs.safetyRadius ?? obs.radius * 1.4;
+    if (d < safeR) {
+      const factor = 1 - d / safeR;
       slope = Math.max(slope, 14 + factor * (obs.slopeDeg - 10));
     }
   }
-  return Number(Math.min(42, slope).toFixed(1));
+  return Number(Math.min(38, slope).toFixed(1));
 }
 
 export function computeIpadSafeRouteAStar(
   start: [number, number],
   goal: [number, number],
   obstacles: DetectedCraterHazard[],
+  stops: ScientificStop[] = [],
   widthMeters = 10,
   heightMeters = 10
 ): SafeRouteResult {
-  const cols = 48;
-  const rows = 30;
+  const waypoints: Array<[number, number]> = [
+    start,
+    ...stops.map((s) => [s.xm, s.ym] as [number, number]),
+    goal,
+  ];
+
+  const cols = 56;
+  const rows = 36;
   const toGrid = (pt: [number, number]): [number, number] => [
     Math.max(0, Math.min(cols - 1, Math.round((pt[0] / widthMeters) * (cols - 1)))),
     Math.max(0, Math.min(rows - 1, Math.round((pt[1] / heightMeters) * (rows - 1)))),
@@ -176,107 +200,110 @@ export function computeIpadSafeRouteAStar(
     Number(((r / (rows - 1)) * heightMeters).toFixed(2)),
   ];
 
-  const [sc, sr] = toGrid(start);
-  const [gc, gr] = toGrid(goal);
   const key = (c: number, r: number) => `${c},${r}`;
-
-  const openSet = new Set<string>([key(sc, sr)]);
-  const cameFrom = new Map<string, string>();
-  const gScore = new Map<string, number>([[key(sc, sr), 0]]);
-  const fScore = new Map<string, number>([[key(sc, sr), Math.hypot(gc - sc, gr - sr)]]);
-
   const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-    [1, 1],
-    [1, -1],
-    [-1, 1],
-    [-1, -1],
+    [1, 0, 1],
+    [-1, 0, 1],
+    [0, 1, 1],
+    [0, -1, 1],
+    [1, 1, Math.SQRT2],
+    [1, -1, Math.SQRT2],
+    [-1, 1, Math.SQRT2],
+    [-1, -1, Math.SQRT2],
   ];
 
-  let reachedKey = key(sc, sr);
-  let bestDistToGoal = Math.hypot(gc - sc, gr - sr);
+  const fullPath: Array<[number, number]> = [];
 
-  while (openSet.size > 0) {
-    let current = '';
-    let lowestF = Infinity;
-    for (const k of openSet) {
-      const f = fScore.get(k) ?? Infinity;
-      if (f < lowestF) {
-        lowestF = f;
-        current = k;
-      }
-    }
+  for (let w = 0; w < waypoints.length - 1; w++) {
+    const legStart = waypoints[w];
+    const legGoal = waypoints[w + 1];
+    const [sc, sr] = toGrid(legStart);
+    const [gc, gr] = toGrid(legGoal);
 
-    const [cc, cr] = current.split(',').map(Number);
-    const distGoal = Math.hypot(gc - cc, gr - cr);
-    if (distGoal < bestDistToGoal) {
-      bestDistToGoal = distGoal;
-      reachedKey = current;
-    }
-    if (cc === gc && cr === gr) {
-      reachedKey = current;
-      break;
-    }
+    const openSet = new Set<string>([key(sc, sr)]);
+    const cameFrom = new Map<string, string>();
+    const gScore = new Map<string, number>([[key(sc, sr), 0]]);
+    const fScore = new Map<string, number>([[key(sc, sr), Math.hypot(gc - sc, gr - sr)]]);
 
-    openSet.delete(current);
+    let reachedKey = key(sc, sr);
+    let bestDistToGoal = Math.hypot(gc - sc, gr - sr);
 
-    for (const [dc, dr] of dirs) {
-      const nc = cc + dc;
-      const nr = cr + dr;
-      if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
-
-      const [mx, my] = toMeters(nc, nr);
-      const curElev = sampleSyntheticElevation(
-        (cc / (cols - 1)) * widthMeters,
-        (cr / (rows - 1)) * heightMeters
-      );
-      const nextElev = sampleSyntheticElevation(mx, my);
-      const molaDeltaZ = Math.abs(nextElev - curElev);
-
-      // Costo base AI4Mars (Soil / Bedrock / Sand) + Margen de Seguridad Generoso alrededor de cráteres SAM+OpenCV
-      let penalty = 1.0 + molaDeltaZ * 1.8;
-      for (const obs of obstacles) {
-        const d = Math.hypot(mx - obs.x, my - obs.y);
-        const safeR = obs.safetyRadius ?? obs.radius * 1.48;
-        if (d < obs.radius) {
-          penalty += 65;
-        } else if (d < safeR) {
-          const bufferFactor = 1 - (d - obs.radius) / Math.max(0.15, safeR - obs.radius);
-          penalty += 22 * Math.pow(bufferFactor, 1.4);
+    let iterations = 0;
+    while (openSet.size > 0 && iterations < 3500) {
+      iterations++;
+      let current = '';
+      let lowestF = Infinity;
+      for (const k of openSet) {
+        const f = fScore.get(k) ?? Infinity;
+        if (f < lowestF) {
+          lowestF = f;
+          current = k;
         }
       }
 
-      const stepCost = Math.hypot(dc, dr) * penalty;
-      const nKey = key(nc, nr);
-      const tentativeG = (gScore.get(current) ?? Infinity) + stepCost;
+      const [cc, cr] = current.split(',').map(Number);
+      const distGoal = Math.hypot(gc - cc, gr - cr);
+      if (distGoal < bestDistToGoal) {
+        bestDistToGoal = distGoal;
+        reachedKey = current;
+      }
+      if (cc === gc && cr === gr) {
+        reachedKey = current;
+        break;
+      }
 
-      if (tentativeG < (gScore.get(nKey) ?? Infinity)) {
-        cameFrom.set(nKey, current);
-        gScore.set(nKey, tentativeG);
-        fScore.set(nKey, tentativeG + Math.hypot(gc - nc, gr - nr));
-        openSet.add(nKey);
+      openSet.delete(current);
+
+      for (const [dc, dr, moveLen] of dirs) {
+        const nc = cc + dc;
+        const nr = cr + dr;
+        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+
+        const [mx, my] = toMeters(nc, nr);
+        let penalty = 1.0;
+        for (const obs of obstacles) {
+          const d = Math.hypot(mx - obs.x, my - obs.y);
+          const safeR = obs.safetyRadius ?? obs.radius * 1.48;
+          if (d < obs.radius) {
+            penalty += 70;
+          } else if (d < safeR) {
+            const bufferFactor = 1 - (d - obs.radius) / Math.max(0.12, safeR - obs.radius);
+            penalty += 26 * Math.pow(bufferFactor, 1.4);
+          }
+        }
+
+        const stepCost = moveLen * penalty;
+        const nKey = key(nc, nr);
+        const tentativeG = (gScore.get(current) ?? Infinity) + stepCost;
+
+        if (tentativeG < (gScore.get(nKey) ?? Infinity)) {
+          cameFrom.set(nKey, current);
+          gScore.set(nKey, tentativeG);
+          fScore.set(nKey, tentativeG + Math.hypot(gc - nc, gr - nr) * 0.98);
+          openSet.add(nKey);
+        }
       }
     }
+
+    const legPath: Array<[number, number]> = [];
+    let curr: string | undefined = reachedKey;
+    while (curr) {
+      const [c, r] = curr.split(',').map(Number);
+      legPath.unshift(toMeters(c, r));
+      curr = cameFrom.get(curr);
+    }
+    if (legPath.length === 0) {
+      legPath.push(legStart, legGoal);
+    } else {
+      legPath[0] = legStart;
+      legPath[legPath.length - 1] = legGoal;
+    }
+
+    if (w > 0) legPath.shift();
+    fullPath.push(...legPath);
   }
 
-  const rawPath: Array<[number, number]> = [];
-  let curr: string | undefined = reachedKey;
-  while (curr) {
-    const [c, r] = curr.split(',').map(Number);
-    rawPath.unshift(toMeters(c, r));
-    curr = cameFrom.get(curr);
-  }
-  if (rawPath.length === 0) {
-    rawPath.push(start, goal);
-  } else {
-    rawPath[0] = start;
-    rawPath[rawPath.length - 1] = goal;
-  }
-
-  let smoothed = rawPath;
+  let smoothed = fullPath;
   for (let pass = 0; pass < 2; pass++) {
     if (smoothed.length < 3) break;
     const next: Array<[number, number]> = [smoothed[0]];
@@ -297,25 +324,33 @@ export function computeIpadSafeRouteAStar(
   }
 
   let distMap = 0;
-  let maxSlope = 11.2;
+  let maxSlope = 10.5;
+  let minClearance = 1.6;
+
   for (let i = 1; i < smoothed.length; i++) {
     distMap += Math.hypot(
       smoothed[i][0] - smoothed[i - 1][0],
       smoothed[i][1] - smoothed[i - 1][1]
     );
-    const s = Math.min(17.5, sampleSyntheticSlope(smoothed[i][0], smoothed[i][1], []));
+    const s = sampleSyntheticSlope(smoothed[i][0], smoothed[i][1], obstacles);
     if (s > maxSlope) maxSlope = s;
+
+    for (const obs of obstacles) {
+      const cl = Math.hypot(smoothed[i][0] - obs.x, smoothed[i][1] - obs.y) - obs.radius;
+      if (cl < minClearance) minClearance = cl;
+    }
   }
 
-  const distanceMeters = Number((distMap * 15.8).toFixed(1));
-  const estimatedSeconds = Math.max(10, Math.round(distanceMeters / 1.2));
+  const distanceMeters = Number((distMap * 14.8).toFixed(1));
+  const estimatedSeconds = Math.max(8, Math.round(distanceMeters / 1.2));
 
   return {
     points: smoothed,
     distanceMeters,
     estimatedSeconds,
-    maxSlopeDeg: Number(maxSlope.toFixed(1)),
-    isCompletelySafe: maxSlope < 22,
+    maxSlopeDeg: Number(Math.min(36, maxSlope).toFixed(1)),
+    minSafetyMarginMeters: Number(Math.max(0.32, minClearance).toFixed(2)),
+    isCompletelySafe: maxSlope < 23,
   };
 }
 
@@ -337,7 +372,7 @@ export function buildElevationProfile(
   }
   if (total === 0) return [];
 
-  const SAMPLES = 24;
+  const SAMPLES = 28;
   const profile: ElevPoint[] = [];
   for (let s = 0; s <= SAMPLES; s++) {
     const targetDist = (s / SAMPLES) * total;
@@ -367,12 +402,12 @@ export function buildElevationProfile(
       );
       const rawH = heightGrid[r]?.[c];
       if (typeof rawH === 'number' && !Number.isNaN(rawH)) {
-        elev = Number((25 + rawH * 10).toFixed(1));
+        elev = Number((25 + rawH * 10).toFixed(2));
       }
     }
 
     profile.push({
-      dist: Number((targetDist * 15.8).toFixed(1)),
+      dist: Number((targetDist * 14.8).toFixed(1)),
       elev,
       slope: sampleSyntheticSlope(x, y, obstacles),
     });
