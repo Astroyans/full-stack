@@ -86,15 +86,28 @@ export function zoomScaleFor(spanKm: number): number {
 
 // Misma reproyección que usa mapCanvasRenderer, pero como fracción 0..1 del lienzo
 // (no en píxeles): la usan los overlays en HTML (formulario de parada, popup) para
-// quedar alineados con lo que dibuja el canvas. Centrado en 0.5, sin pan.
-export function projectFrac(valueM: number, totalM: number, zoomScale: number): number {
-  return 0.5 + (valueM / totalM - 0.5) * zoomScale;
+// quedar alineados con lo que dibuja el canvas. `centerFrac` es qué fracción 0..1 del
+// eje queda en el centro de pantalla (0.5 = el centro del mapa, como antes); al
+// acercar hacia un punto bajo el cursor, ese punto deja de ser 0.5 y la vista
+// "se mueve" hacia ahí en vez de siempre recentrarse en el medio del mapa.
+export function projectFrac(
+  valueM: number,
+  totalM: number,
+  zoomScale: number,
+  centerFrac: number = 0.5
+): number {
+  return 0.5 + (valueM / totalM - centerFrac) * zoomScale;
 }
 
 // Inversa de projectFrac: de una fracción de pantalla (p.ej. de un clic) de vuelta a
 // la coordenada del espacio sintético 0..totalM.
-export function unprojectFrac(frac: number, totalM: number, zoomScale: number): number {
-  return totalM * ((frac - 0.5) / zoomScale + 0.5);
+export function unprojectFrac(
+  frac: number,
+  totalM: number,
+  zoomScale: number,
+  centerFrac: number = 0.5
+): number {
+  return totalM * ((frac - 0.5) / zoomScale + centerFrac);
 }
 
 // Mezcla color (Viking, contexto amplio) / gris (THEMIS, detalle) según qué tan
@@ -125,7 +138,7 @@ function eqTileForLatLon(lat: number, lon: number, z: number): TileCoord {
   return { z, row, col, ncols, nrows };
 }
 
-function tileUrl(def: MarsLayerDef, z: number, row: number, col: number): string {
+export function tileUrl(def: MarsLayerDef, z: number, row: number, col: number): string {
   return `https://trek.nasa.gov/tiles/Mars/EQ/${def.layer}/1.0.0//default/default028mm/${z}/${row}/${col}.${def.ext}`;
 }
 
@@ -152,7 +165,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 
 const tileImageCache = new Map<string, Promise<HTMLImageElement>>();
 
-function loadTileCached(url: string): Promise<HTMLImageElement> {
+export function loadTileCached(url: string): Promise<HTMLImageElement> {
   let cached = tileImageCache.get(url);
   if (!cached) {
     cached = loadImage(url);

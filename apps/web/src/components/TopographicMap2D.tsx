@@ -18,7 +18,7 @@ import {
   OperationMode,
   sampleMatrixAt,
 } from '../config/connectionConfig';
-import { MapLayerMode, renderTopographicMapCanvas } from './map/mapCanvasRenderer';
+import { MapLayerMode, renderTopographicMapCanvas, clientPointToMapFrac } from './map/mapCanvasRenderer';
 import { d415MetersToMapMeters } from '../utils/imageVision';
 import { MAX_STOPS, ScientificStop } from '../data/stops';
 import {
@@ -36,6 +36,8 @@ import {
   ZOOM_STEP_FACTOR,
   zoomScaleFor,
 } from '../utils/marsTiles';
+import { GLOBE_MAX_SPAN_KM, globeOpacityForSpan } from '../utils/marsGlobe';
+import { MarsGlobeView } from './map/MarsGlobeView';
 
 interface TopographicMap2DProps {
   dataset: MartianTerrainDataset;
@@ -812,63 +814,6 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const [showSettingsMenu, setShowSettingsMenu] = useState<boolean>(false);
   const [showLegend, setShowLegend] = useState<boolean>(false);
 
-  const [unexploredQuads, setUnexploredQuads] = useState<
-    Array<{
-      id: string;
-      label: string;
-      xMinM: number;
-      xMaxM: number;
-      yMinM: number;
-      yMaxM: number;
-      status: 'unexplored' | 'scanning' | 'explored';
-      progress: number;
-    }>
-  >([
-    {
-      id: 'Q-NE',
-      label: 'Q-NE',
-      xMinM: 6.3,
-      xMaxM: 8.3,
-      yMinM: 1.5,
-      yMaxM: 3.5,
-      status: 'unexplored',
-      progress: 0,
-    },
-    {
-      id: 'Q-SE',
-      label: 'Q-SE',
-      xMinM: 6.5,
-      xMaxM: 8.5,
-      yMinM: 6.2,
-      yMaxM: 8.2,
-      status: 'unexplored',
-      progress: 0,
-    },
-  ]);
-  const [deployAlert, setDeployAlert] = useState<{
-    title: string;
-    detail: string;
-    progress: number;
-  } | null>(null);
-  const [animatedDronePos, setAnimatedDronePos] = useState<[number, number]>(FIXED_DRONE_PAD_POS);
-  const [deployFlightLine, setDeployFlightLine] = useState<{
-    from: [number, number];
-    to: [number, number];
-  } | null>(null);
-  const [isDeployingDrone, setIsDeployingDrone] = useState<boolean>(false);
-  const [hasDeployedDrone, setHasDeployedDrone] = useState<boolean>(false);
-  const [droneVisionOpen, setDroneVisionOpen] = useState<boolean>(false);
-  const [droneVisionMode, setDroneVisionMode] = useState<'rgb' | 'depth' | 'route_map' | 'triple'>('rgb');
-  const deployTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (deployTimerRef.current !== null) {
-        window.clearInterval(deployTimerRef.current);
-      }
-    };
-  }, []);
-
   // Paradas científicas: se agregan con clic derecho (hasta MAX_STOPS) y se quitan
   // con clic derecho sobre una ya puesta.
   const [stops, setStops] = useState<ScientificStop[]>([]);
@@ -891,28 +836,67 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   // (EVA-01, Destino, obstáculos, paradas, ruta) se reproyectan con el mismo zoom,
   // así que se mueven con el terreno en vez de quedarse pegados a la pantalla.
   const [currentSpanKm, setCurrentSpanKm] = useState<number>(DEFAULT_SPAN_KM);
+  // Punto del espacio sintético 0..10 que queda fijo en el centro de pantalla al
+  // acercar/alejar. Arranca en (5,5) = el centro del mapa (comportamiento de antes).
+  // La rueda del mouse lo mueve hacia donde apunta el cursor al hacer zoom, para que
+  // el acercamiento "viaje" ahí en vez de siempre volver a donde esté EVA-01.
+  const [viewCenter, setViewCenter] = useState<[number, number]>([5, 5]);
   const [loadedTierSpanKm, setLoadedTierSpanKm] = useState<number>(REFERENCE_SPAN_KM);
   const [zoomTilesLoading, setZoomTilesLoading] = useState<boolean>(false);
   const [zoomTilesFailed, setZoomTilesFailed] = useState<boolean>(false);
   const lastRequestedTierRef = useRef<number | null>(null);
+  const flyAnimRef = useRef<number | null>(null);
 
-  const zoomScale = zoomScaleFor(currentSpanKm);
-  const bgCropFraction = bgCropFractionFor(currentSpanKm, loadedTierSpanKm);
+  // Más allá de MAX_SPAN_KM el mapa plano se queda quieto y el globo aparece encima.
+  const flatSpanKm = Math.min(currentSpanKm, MAX_SPAN_KM);
+  const globeOpacity = globeOpacityForSpan(currentSpanKm);
+  const zoomScale = zoomScaleFor(flatSpanKm);
+  const bgCropFraction = bgCropFractionFor(flatSpanKm, loadedTierSpanKm);
 
   const changeZoom = (dir: 1 | -1) => {
+    if (flyAnimRef.current !== null) {
+      cancelAnimationFrame(flyAnimRef.current);
+      flyAnimRef.current = null;
+    }
     setCurrentSpanKm((prev) => {
       const next = dir === 1 ? prev / ZOOM_STEP_FACTOR : prev * ZOOM_STEP_FACTOR;
-      return Math.min(MAX_SPAN_KM, Math.max(MIN_SPAN_KM, next));
+      return Math.min(GLOBE_MAX_SPAN_KM, Math.max(MIN_SPAN_KM, next));
     });
   };
 
-  const resetZoom = () => setCurrentSpanKm(DEFAULT_SPAN_KM);
+  // Acercamiento animado (en escala logarítmica) desde el globo hasta el sitio de la misión.
+  const flyToSpan = (targetKm: number, durationMs = 1100) => {
+    if (flyAnimRef.current !== null) cancelAnimationFrame(flyAnimRef.current);
+    setViewCenter([5, 5]); // "Ir al sitio" siempre apunta al centro de la misión, no a un pan previo
+    const startKm = currentSpanKm;
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / durationMs);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const logKm = Math.log(startKm) + (Math.log(targetKm) - Math.log(startKm)) * eased;
+      setCurrentSpanKm(Math.exp(logKm));
+      flyAnimRef.current = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    flyAnimRef.current = requestAnimationFrame(step);
+  };
+
+  useEffect(
+    () => () => {
+      if (flyAnimRef.current !== null) cancelAnimationFrame(flyAnimRef.current);
+    },
+    []
+  );
+
+  const resetZoom = () => {
+    setCurrentSpanKm(DEFAULT_SPAN_KM);
+    setViewCenter([5, 5]);
+  };
 
   // Sólo recarga tiles reales cuando el zoom cruza a un escalón de detalle distinto
   // (TIERS_KM); entre medio, el zoom se ve recortando/escalando el mismo mosaico ya
   // cargado (sin red), igual que un visor de mapas real mientras llega más detalle.
   useEffect(() => {
-    const neededTier = activeTierForSpan(currentSpanKm);
+    const neededTier = activeTierForSpan(flatSpanKm);
     if (lastRequestedTierRef.current === neededTier) return;
     lastRequestedTierRef.current = neededTier;
 
@@ -937,18 +921,47 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentSpanKm]);
+  }, [flatSpanKm]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      changeZoom(e.deltaY < 0 ? 1 : -1);
+      if (flyAnimRef.current !== null) {
+        cancelAnimationFrame(flyAnimRef.current);
+        flyAnimRef.current = null;
+      }
+      const dir: 1 | -1 = e.deltaY < 0 ? 1 : -1;
+      const { fracX: relX, fracY: relY } = clientPointToMapFrac(canvas, e.clientX, e.clientY, showMetricGrid);
+
+      const nextSpanKm = Math.min(
+        GLOBE_MAX_SPAN_KM,
+        Math.max(MIN_SPAN_KM, dir === 1 ? currentSpanKm / ZOOM_STEP_FACTOR : currentSpanKm * ZOOM_STEP_FACTOR)
+      );
+      const nextZoomScale = zoomScaleFor(Math.min(nextSpanKm, MAX_SPAN_KM));
+
+      const centerFracX = viewCenter[0] / dataset.widthMeters;
+      const centerFracY = viewCenter[1] / dataset.heightMeters;
+
+      // Punto sintético que queda bajo el cursor con el zoom ACTUAL...
+      const pointFracX = centerFracX + (relX - 0.5) / zoomScale;
+      const pointFracY = centerFracY + (relY - 0.5) / zoomScale;
+
+      // ...y nuevo centro para que ese mismo punto siga bajo el cursor con el zoom NUEVO,
+      // en vez de volver siempre al centro fijo del mapa (donde suele estar EVA-01).
+      const newCenterFracX = pointFracX - (relX - 0.5) / nextZoomScale;
+      const newCenterFracY = pointFracY - (relY - 0.5) / nextZoomScale;
+
+      setViewCenter([
+        Math.min(10, Math.max(0, newCenterFracX * dataset.widthMeters)),
+        Math.min(10, Math.max(0, newCenterFracY * dataset.heightMeters)),
+      ]);
+      setCurrentSpanKm(nextSpanKm);
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [currentSpanKm, viewCenter, zoomScale, dataset.widthMeters, dataset.heightMeters, showMetricGrid]);
 
   useEffect(() => {
     fetch('/data/real_map_state.json')
@@ -1238,6 +1251,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       stops,
       zoomScale,
       bgCropFraction,
+      viewCenter,
+      loadedTierSpanKm,
     });
   }, [
     dataset,
@@ -1257,21 +1272,23 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     stops,
     zoomScale,
     bgCropFraction,
+    viewCenter,
+    loadedTierSpanKm,
     liveImageVersion,
   ]);
 
   // Convierte la posición del mouse/clic en el canvas a las mismas "unidades" (0..10)
   // que usa el resto del mapa para EVA-01, Destino, el Dron y ahora las paradas —
-  // deshaciendo el mismo zoom (centrado, sin pan) con el que se dibujan.
+  // deshaciendo el mismo zoom+pan (centrado en viewCenter) con el que se dibujan.
   const eventToMeters = (e: { clientX: number; clientY: number }): [number, number] | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const relX = Math.max(0.04, Math.min(0.96, (e.clientX - rect.left) / rect.width));
-    const relY = Math.max(0.05, Math.min(0.95, (e.clientY - rect.top) / rect.height));
+    const { fracX: relX, fracY: relY } = clientPointToMapFrac(canvas, e.clientX, e.clientY, showMetricGrid);
+    const centerFracX = viewCenter[0] / dataset.widthMeters;
+    const centerFracY = viewCenter[1] / dataset.heightMeters;
     return [
-      Number(unprojectFrac(relX, dataset.widthMeters, zoomScale).toFixed(2)),
-      Number(unprojectFrac(relY, dataset.heightMeters, zoomScale).toFixed(2)),
+      Number(unprojectFrac(relX, dataset.widthMeters, zoomScale, centerFracX).toFixed(2)),
+      Number(unprojectFrac(relY, dataset.heightMeters, zoomScale, centerFracY).toFixed(2)),
     ];
   };
 
@@ -1307,141 +1324,6 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     if (onTargetSelect) {
       onTargetSelect([xm, ym]);
     }
-  };
-
-  const deployDroneToQuadrant = (quadId: string) => {
-    if (isDeployingDrone) return;
-    const targetQuad = unexploredQuads.find((q) => q.id === quadId);
-    if (!targetQuad || targetQuad.status !== 'unexplored') return;
-
-    const cx = Number(((targetQuad.xMinM + targetQuad.xMaxM) / 2).toFixed(2));
-    const cy = Number(((targetQuad.yMinM + targetQuad.yMaxM) / 2).toFixed(2));
-    const padX = (targetQuad.xMaxM - targetQuad.xMinM) * 0.22;
-    const padY = (targetQuad.yMaxM - targetQuad.yMinM) * 0.22;
-    const scanStartX = Number((targetQuad.xMinM + padX).toFixed(2));
-    const scanStartY = Number((targetQuad.yMinM + padY).toFixed(2));
-    const scanSpanX = targetQuad.xMaxM - targetQuad.xMinM - padX * 2;
-    const scanSpanY = targetQuad.yMaxM - targetQuad.yMinM - padY * 2;
-    const startPos: [number, number] = animatedDronePos;
-
-    setIsDeployingDrone(true);
-    setHasDeployedDrone(true);
-    setDroneVisionOpen(true);
-    setDeployFlightLine({ from: startPos, to: [scanStartX, scanStartY] });
-    setTargetPoint([cx, cy]);
-    setHasUserSelectedTarget(true);
-    if (onTargetSelect) {
-      onTargetSelect([cx, cy]);
-    }
-
-    setUnexploredQuads((prev) =>
-      prev.map((q) => (q.id === quadId ? { ...q, status: 'scanning', progress: 0 } : q))
-    );
-    setDeployAlert({
-      title: `DESPLEGANDO DRON → ${targetQuad.label}`,
-      detail: 'Despegando y avanzando hacia el cuadrante sin explorar...',
-      progress: 0,
-    });
-
-    const flySteps = 75;
-    const scanSteps = 85;
-    const returnSteps = 65;
-    const totalSteps = flySteps + scanSteps + returnSteps;
-    let lastScanPos: [number, number] = [cx, cy];
-    let step = 0;
-
-    if (deployTimerRef.current !== null) {
-      window.clearInterval(deployTimerRef.current);
-    }
-
-    deployTimerRef.current = window.setInterval(() => {
-      step += 1;
-      if (step <= flySteps) {
-        const t = step / flySteps;
-        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        const nx = Number((startPos[0] + (scanStartX - startPos[0]) * ease).toFixed(3));
-        const ny = Number((startPos[1] + (scanStartY - startPos[1]) * ease).toFixed(3));
-        setAnimatedDronePos([nx, ny]);
-        const totalPct = Math.round((step / totalSteps) * 100);
-        setDeployAlert({
-          title: `DESPLEGANDO DRON → ${targetQuad.label}`,
-          detail: `En tránsito hacia cuadrante (${Math.round(t * 100)}%)...`,
-          progress: totalPct,
-        });
-      } else if (step <= flySteps + scanSteps) {
-        const scanT = (step - flySteps) / scanSteps;
-        const scanPct = Math.round(scanT * 100);
-        const totalPct = Math.round((step / totalSteps) * 100);
-        // Barrido en zig-zag dentro del cuadrante para simular mapeo activo
-        const sweepFreq = 2.5;
-        const rawWave = (scanT * sweepFreq) % 2;
-        const zig = rawWave <= 1 ? rawWave : 2 - rawWave;
-        const sx = Number((scanStartX + scanSpanX * zig).toFixed(3));
-        const sy = Number((scanStartY + scanSpanY * scanT).toFixed(3));
-        lastScanPos = [sx, sy];
-        setAnimatedDronePos([sx, sy]);
-        setUnexploredQuads((prev) =>
-          prev.map((q) => (q.id === quadId ? { ...q, progress: scanPct } : q))
-        );
-        setDeployAlert({
-          title: `DESPLEGANDO DRON → ${targetQuad.label}`,
-          detail: `Escaneando cuadrante con datos grabados (${scanPct}%)...`,
-          progress: totalPct,
-        });
-      } else if (step <= totalSteps) {
-        if (step === flySteps + scanSteps + 1) {
-          setUnexploredQuads((prev) =>
-            prev.map((q) => (q.id === quadId ? { ...q, status: 'explored', progress: 100 } : q))
-          );
-          setDeployFlightLine({ from: lastScanPos, to: dronePadPos });
-        }
-        const retT = (step - flySteps - scanSteps) / returnSteps;
-        const ease = retT < 0.5 ? 2 * retT * retT : 1 - Math.pow(-2 * retT + 2, 2) / 2;
-        const rx = Number((lastScanPos[0] + (dronePadPos[0] - lastScanPos[0]) * ease).toFixed(3));
-        const ry = Number((lastScanPos[1] + (dronePadPos[1] - lastScanPos[1]) * ease).toFixed(3));
-        setAnimatedDronePos([rx, ry]);
-        const totalPct = Math.round((step / totalSteps) * 100);
-        setDeployAlert({
-          title: `RETORNANDO DRON AL ROVER`,
-          detail: `Cuadrante ${targetQuad.label} completado. Regresando (${Math.round(retT * 100)}%)...`,
-          progress: totalPct,
-        });
-      } else {
-        if (deployTimerRef.current !== null) {
-          window.clearInterval(deployTimerRef.current);
-          deployTimerRef.current = null;
-        }
-        setAnimatedDronePos(dronePadPos);
-        setDeployFlightLine(null);
-        setDroneVisionOpen(false);
-        setHasDeployedDrone(false);
-        setDeployAlert({
-          title: `DRON EN ROVER · ${targetQuad.label} EXPLORADO`,
-          detail: 'Dron acoplado nuevamente en base junto al operador.',
-          progress: 100,
-        });
-        setIsDeployingDrone(false);
-        window.setTimeout(() => {
-          setDeployAlert(null);
-        }, 2500);
-      }
-    }, 140);
-  };
-
-  const resetUnexploredQuadrants = () => {
-    if (deployTimerRef.current !== null) {
-      window.clearInterval(deployTimerRef.current);
-      deployTimerRef.current = null;
-    }
-    setIsDeployingDrone(false);
-    setHasDeployedDrone(false);
-    setDroneVisionOpen(false);
-    setDeployAlert(null);
-    setDeployFlightLine(null);
-    setAnimatedDronePos(dronePadPos);
-    setUnexploredQuads((prev) =>
-      prev.map((q) => ({ ...q, status: 'unexplored', progress: 0 }))
-    );
   };
 
   // Clic derecho: sobre una parada existente la borra; sobre vacío abre el
@@ -1497,7 +1379,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     const relY = (e.clientY - rect.top) / rect.height;
     // Lat/Lon reales según el zoom libre activo, centradas en el cráter Dollfus
     // (no un desplazamiento inventado): la vista cubre currentSpanKm de lado real.
-    const { latSpanDeg, lonSpanDeg } = degSpansForSpanKm(currentSpanKm);
+    const { latSpanDeg, lonSpanDeg } = degSpansForSpanKm(flatSpanKm);
     const lat = (DOLLFUS_CENTER.lat + latSpanDeg * (0.5 - relY)).toFixed(5);
     const lon = (DOLLFUS_CENTER.lon + lonSpanDeg * (relX - 0.5)).toFixed(5) + '°';
     setHoverCoords({ lat, lon });
@@ -2272,431 +2154,26 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               }}
             />
 
-            {/* Alerta táctica de despliegue de dron */}
-            {deployAlert && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '12px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  background: 'rgba(8, 17, 30, 0.96)',
-                  border: '1.5px solid #ea580c',
-                  borderRadius: '10px',
-                  padding: '8px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  zIndex: 16,
-                  boxShadow: '0 6px 22px rgba(234, 88, 12, 0.35)',
-                  minWidth: '300px',
-                }}
-              >
-                <span
-                  style={{
-                    width: '9px',
-                    height: '9px',
-                    borderRadius: '50%',
-                    background: '#fb923c',
-                    boxShadow: '0 0 8px #fb923c',
-                    flexShrink: 0,
-                  }}
-                />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#fed7aa', letterSpacing: '0.4px' }}>
-                    {deployAlert.title}
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#fde68a', marginTop: '1px' }}>
-                    {deployAlert.detail}
-                  </div>
-                </div>
-                <div style={{ width: '76px', textAlign: 'right' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#38bdf8' }}>
-                    {deployAlert.progress}%
-                  </div>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: '5px',
-                      background: '#1e293b',
-                      borderRadius: '999px',
-                      overflow: 'hidden',
-                      marginTop: '3px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${deployAlert.progress}%`,
-                        height: '100%',
-                        background: 'linear-gradient(90deg, #ea580c, #38bdf8)',
-                        transition: 'width 0.1s linear',
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Cuadrantes sin explorar interactivos */}
-            {unexploredQuads.map((q) => {
-              const leftPct = projectFrac(q.xMinM, dataset.widthMeters, zoomScale) * 100;
-              const rightPct = projectFrac(q.xMaxM, dataset.widthMeters, zoomScale) * 100;
-              const topPct = projectFrac(q.yMinM, dataset.heightMeters, zoomScale) * 100;
-              const bottomPct = projectFrac(q.yMaxM, dataset.heightMeters, zoomScale) * 100;
-              const widthPct = Math.max(0, rightPct - leftPct);
-              const heightPct = Math.max(0, bottomPct - topPct);
-              if (widthPct <= 1 || heightPct <= 1) return null;
-
-              const isUnexplored = q.status === 'unexplored';
-              const isScanning = q.status === 'scanning';
-
-              return (
-                <div
-                  key={q.id}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    if (isUnexplored) deployDroneToQuadrant(q.id);
-                  }}
-                  title={
-                    isUnexplored
-                      ? `Clic para desplegar dron hacia cuadrante ${q.label}`
-                      : undefined
-                  }
-                  style={{
-                    position: 'absolute',
-                    left: `${leftPct}%`,
-                    top: `${topPct}%`,
-                    width: `${widthPct}%`,
-                    height: `${heightPct}%`,
-                    border: isUnexplored
-                      ? '1.5px dashed rgba(245, 158, 11, 0.85)'
-                      : isScanning
-                      ? '1.5px solid #38bdf8'
-                      : '1px solid rgba(34, 197, 94, 0.45)',
-                    background: isUnexplored
-                      ? 'rgba(8, 13, 24, 0.72)'
-                      : isScanning
-                      ? 'rgba(14, 165, 233, 0.14)'
-                      : 'rgba(34, 197, 94, 0.06)',
-                    borderRadius: '6px',
-                    zIndex: 7,
-                    cursor: isUnexplored ? 'pointer' : 'default',
-                    pointerEvents: isUnexplored ? 'auto' : 'none',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    padding: '6px',
-                    boxSizing: 'border-box',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {isScanning && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        bottom: 0,
-                        width: '100%',
-                        height: `${q.progress}%`,
-                        background: 'rgba(56, 189, 248, 0.20)',
-                        transition: 'height 0.1s linear',
-                        pointerEvents: 'none',
-                      }}
-                    />
-                  )}
-                  <span
-                    style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      color: isUnexplored ? '#fde68a' : isScanning ? '#bae6fd' : '#86efac',
-                      zIndex: 1,
-                    }}
-                  >
-                    {q.label} · {isUnexplored ? 'SIN EXPLORAR' : isScanning ? `ESCANEANDO ${q.progress}%` : 'EXPLORADO'}
-                  </span>
-                  {isUnexplored && (
-                    <span
-                      style={{
-                        fontSize: '9.5px',
-                        fontWeight: 700,
-                        color: '#fbbf24',
-                        background: 'rgba(15, 23, 42, 0.85)',
-                        padding: '2px 6px',
-                        borderRadius: '4px',
-                        alignSelf: 'flex-start',
-                        zIndex: 1,
-                      }}
-                    >
-                      CLICK · DESPLEGAR DRON
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Trayectoria y dron animado hacia el cuadrante */}
-            {deployFlightLine && (
-              <>
-                <svg
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    zIndex: 11,
-                    pointerEvents: 'none',
-                  }}
-                >
-                  <line
-                    x1={projectFrac(deployFlightLine.from[0], dataset.widthMeters, zoomScale) * 100}
-                    y1={projectFrac(deployFlightLine.from[1], dataset.heightMeters, zoomScale) * 100}
-                    x2={projectFrac(deployFlightLine.to[0], dataset.widthMeters, zoomScale) * 100}
-                    y2={projectFrac(deployFlightLine.to[1], dataset.heightMeters, zoomScale) * 100}
-                    stroke="#38bdf8"
-                    strokeWidth="0.45"
-                    strokeDasharray="1.5 1.2"
-                  />
-                </svg>
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${projectFrac(animatedDronePos[0], dataset.widthMeters, zoomScale) * 100}%`,
-                    top: `${projectFrac(animatedDronePos[1], dataset.heightMeters, zoomScale) * 100}%`,
-                    transform: 'translate(-50%, -50%)',
-                    zIndex: 12,
-                    pointerEvents: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <div
-                    style={{
-                      position: 'absolute',
-                      width: '38px',
-                      height: '38px',
-                      borderRadius: '50%',
-                      border: '1.5px solid rgba(56, 189, 248, 0.75)',
-                      background: 'rgba(56, 189, 248, 0.14)',
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: '12px',
-                      height: '12px',
-                      borderRadius: '50%',
-                      background: '#38bdf8',
-                      border: '2px solid #ffffff',
-                      boxShadow: '0 0 10px #38bdf8',
-                    }}
-                  />
-                </div>
-              </>
-            )}
-
-            {/* Botón / Panel flotante de visualización solo tras desplegar el dron */}
-            {hasDeployedDrone &&
-              (!droneVisionOpen ? (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: '50%',
-                  bottom: '12px',
-                  transform: 'translateX(-50%)',
-                  zIndex: 14,
-                  display: 'flex',
-                  gap: '6px',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setDroneVisionOpen(true)}
-                  style={{
-                    background: 'rgba(8, 17, 30, 0.94)',
-                    border: '1px solid #1e3a5f',
-                    borderRadius: '6px',
-                    color: '#38bdf8',
-                    fontSize: '10.5px',
-                    fontWeight: 700,
-                    padding: '6px 10px',
-                    cursor: 'pointer',
-                    letterSpacing: '0.4px',
-                  }}
-                >
-                  VER IMÁGENES DRON
-                </button>
-              </div>
-            ) : (
-              <div
-                onClick={(ev) => ev.stopPropagation()}
-                style={{
-                  position: 'absolute',
-                  left: '50%',
-                  bottom: '12px',
-                  transform: 'translateX(-50%)',
-                  width: droneVisionMode === 'triple' ? '440px' : '270px',
-                  maxWidth: 'calc(100% - 24px)',
-                  background: 'rgba(8, 17, 30, 0.96)',
-                  border: '1px solid #1e3a5f',
-                  borderRadius: '10px',
-                  padding: '9px',
-                  zIndex: 15,
-                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '7px',
-                    gap: '6px',
-                  }}
-                >
-                  <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.4px' }}>
-                    VISUALIZACIÓN DRON (EN VIVO)
-                  </span>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      type="button"
-                      onClick={resetUnexploredQuadrants}
-                      style={{
-                        background: '#1e293b',
-                        border: '1px solid #334155',
-                        borderRadius: '4px',
-                        color: '#cbd5e1',
-                        fontSize: '9.5px',
-                        padding: '2px 6px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Reiniciar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDroneVisionOpen(false)}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#94a3b8',
-                        fontSize: '13px',
-                        cursor: 'pointer',
-                        padding: '0 4px',
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '4px', marginBottom: '7px', flexWrap: 'wrap' }}>
-                  {(
-                    [
-                      ['rgb', 'RGB Marte'],
-                      ['depth', 'Depth ToF'],
-                      ['route_map', 'Mapa A*'],
-                      ['triple', 'Triple'],
-                    ] as const
-                  ).map(([mKey, mLabel]) => (
-                    <button
-                      key={mKey}
-                      type="button"
-                      onClick={() => setDroneVisionMode(mKey)}
-                      style={{
-                        background: droneVisionMode === mKey ? '#0284c7' : '#0f172a',
-                        border: `1px solid ${droneVisionMode === mKey ? '#38bdf8' : '#1e293b'}`,
-                        borderRadius: '5px',
-                        color: droneVisionMode === mKey ? '#ffffff' : '#94a3b8',
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        padding: '3px 7px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {mLabel}
-                    </button>
-                  ))}
-                </div>
-
-                {droneVisionMode === 'triple' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '5px' }}>
-                    {(['rgb', 'depth', 'route_map'] as const).map((k) => {
-                      const raw = droneData?.images?.[k];
-                      const src = raw
-                        ? raw.startsWith('data:')
-                          ? raw
-                          : `data:image/jpeg;base64,${raw}`
-                        : null;
-                      return src ? (
-                        <img
-                          key={k}
-                          src={src}
-                          alt={k}
-                          style={{ width: '100%', borderRadius: '5px', border: '1px solid #1e293b', display: 'block' }}
-                        />
-                      ) : (
-                        <div
-                          key={k}
-                          style={{
-                            height: '72px',
-                            background: '#020617',
-                            borderRadius: '5px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '9px',
-                            color: '#64748b',
-                          }}
-                        >
-                          Sin señal
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  (() => {
-                    const raw = droneData?.images?.[droneVisionMode];
-                    const src = raw
-                      ? raw.startsWith('data:')
-                        ? raw
-                        : `data:image/jpeg;base64,${raw}`
-                      : null;
-                    return src ? (
-                      <img
-                        src={src}
-                        alt={droneVisionMode}
-                        style={{ width: '100%', borderRadius: '6px', border: '1px solid #1e293b', display: 'block' }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          height: '130px',
-                          background: '#020617',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '11px',
-                          color: '#64748b',
-                        }}
-                      >
-                        Esperando imágenes del stream...
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
-            ))}
+            {/* Vista global: el planeta completo aparece al alejar más allá de 250 km */}
+            <MarsGlobeView
+              width={920}
+              height={540}
+              spanKm={currentSpanKm}
+              opacity={globeOpacity}
+              onZoom={changeZoom}
+              onFlyToSite={() => flyToSpan(DEFAULT_SPAN_KM)}
+              onHover={(lat, lon) =>
+                setHoverCoords({ lat: lat.toFixed(5), lon: `${lon.toFixed(5)}°` })
+              }
+            />
 
             {/* Formulario para agregar una parada científica (clic derecho en el mapa) */}
             {pendingStopPos && (
               <div
                 style={{
                   position: 'absolute',
-                  left: `${Math.min(78, projectFrac(pendingStopPos[0], dataset.widthMeters, zoomScale) * 100)}%`,
-                  top: `${Math.min(80, projectFrac(pendingStopPos[1], dataset.heightMeters, zoomScale) * 100)}%`,
+                  left: `${Math.min(78, projectFrac(pendingStopPos[0], dataset.widthMeters, zoomScale, viewCenter[0] / dataset.widthMeters) * 100)}%`,
+                  top: `${Math.min(80, projectFrac(pendingStopPos[1], dataset.heightMeters, zoomScale, viewCenter[1] / dataset.heightMeters) * 100)}%`,
                   transform: 'translate(-10px, -10px)',
                   background: 'rgba(8, 17, 30, 0.97)',
                   border: '1.5px solid #38bdf8',
@@ -2813,8 +2290,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               <div
                 style={{
                   position: 'absolute',
-                  left: `${Math.min(76, projectFrac(selectedStop.xm, dataset.widthMeters, zoomScale) * 100)}%`,
-                  top: `${Math.min(78, projectFrac(selectedStop.ym, dataset.heightMeters, zoomScale) * 100)}%`,
+                  left: `${Math.min(76, projectFrac(selectedStop.xm, dataset.widthMeters, zoomScale, viewCenter[0] / dataset.widthMeters) * 100)}%`,
+                  top: `${Math.min(78, projectFrac(selectedStop.ym, dataset.heightMeters, zoomScale, viewCenter[1] / dataset.heightMeters) * 100)}%`,
                   transform: 'translate(-10px, -10px)',
                   background: 'rgba(8, 17, 30, 0.97)',
                   border: '1.5px solid #38bdf8',
@@ -2895,7 +2372,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               </button>
               <button
                 onClick={() => changeZoom(-1)}
-                disabled={currentSpanKm >= MAX_SPAN_KM}
+                disabled={currentSpanKm >= GLOBE_MAX_SPAN_KM}
                 title="Alejar"
                 style={{
                   background: 'transparent',
@@ -2905,8 +2382,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                   fontSize: '15px',
                   fontWeight: 700,
                   padding: '9px 11px',
-                  cursor: currentSpanKm >= MAX_SPAN_KM ? 'default' : 'pointer',
-                  opacity: currentSpanKm >= MAX_SPAN_KM ? 0.35 : 1,
+                  cursor: currentSpanKm >= GLOBE_MAX_SPAN_KM ? 'default' : 'pointer',
+                  opacity: currentSpanKm >= GLOBE_MAX_SPAN_KM ? 0.35 : 1,
                 }}
               >
                 −

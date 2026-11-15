@@ -3,7 +3,56 @@ import { MartianTerrainDataset } from '../../config/connectionModes';
 import { d415MetersToMapMeters, ImageVisionAnalysis } from '../../utils/imageVision';
 import { SafeRouteResult } from '../../utils/pathfinderAStar';
 import { ScientificStop } from '../../data/stops';
-import { projectFrac } from '../../utils/marsTiles';
+import { projectFrac, REFERENCE_SPAN_KM } from '../../utils/marsTiles';
+
+// Cuando se muestra la cuadrícula métrica, el mapa se dibuja un poco más chico
+// (MARGIN_LEFT/MARGIN_TOP) para dejar un margen propio donde sobresalen los
+// números de los ejes — como una regla pegada al mapa, no encima de la imagen.
+// Exportadas para que el hit-testing del mouse (clic, popups, zoom con rueda)
+// use exactamente el mismo margen con el que se dibuja, en vez de duplicar los
+// números por separado y desalinearse si uno de los dos cambia.
+export const METRIC_GRID_MARGIN_TOP = 24;
+export const METRIC_GRID_MARGIN_LEFT = 42;
+
+/**
+ * Convierte un punto del mouse (clientX/clientY del evento) en la fracción 0..1
+ * dentro del área de mapa (la misma que usan projectFrac/projX/projY), deshaciendo
+ * dos cosas que el cálculo ingenuo `(clientX-rect.left)/rect.width` ignora:
+ *  1. El canvas se dibuja con `object-fit: cover`, así que si la caja CSS no tiene
+ *     la misma proporción que la resolución interna (920x540), una parte del
+ *     canvas queda recortada fuera de vista — hay que deshacer ese recorte.
+ *  2. El margen de la regla (METRIC_GRID_MARGIN_LEFT/TOP) no es parte del área de
+ *     mapa, así que hay que restarlo antes de sacar la fracción.
+ * Sin esto, el "zoom hacia el cursor" y el clic-para-agregar-parada quedan
+ * sistemáticamente desalineados del punto real bajo el mouse.
+ */
+export function clientPointToMapFrac(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+  showMetricGrid: boolean
+): { fracX: number; fracY: number } {
+  const rect = canvas.getBoundingClientRect();
+  const iw = canvas.width;
+  const ih = canvas.height;
+  const scale = Math.max(rect.width / iw, rect.height / ih);
+  const renderedW = iw * scale;
+  const renderedH = ih * scale;
+  const offsetX = (rect.width - renderedW) / 2;
+  const offsetY = (rect.height - renderedH) / 2;
+  const canvasPxX = (clientX - rect.left - offsetX) / scale;
+  const canvasPxY = (clientY - rect.top - offsetY) / scale;
+
+  const marginTop = showMetricGrid ? METRIC_GRID_MARGIN_TOP : 0;
+  const marginLeft = showMetricGrid ? METRIC_GRID_MARGIN_LEFT : 0;
+  const mapW = iw - marginLeft;
+  const mapH = ih - marginTop;
+
+  return {
+    fracX: Math.max(0, Math.min(1, (canvasPxX - marginLeft) / mapW)),
+    fracY: Math.max(0, Math.min(1, (canvasPxY - marginTop) / mapH)),
+  };
+}
 
 export type MapLayerMode =
   | 'fusion_mars_d415'
@@ -41,12 +90,20 @@ export interface MapCanvasRenderParams {
   dronePadPos: [number, number];
   evaPos: [number, number];
   stops?: ScientificStop[];
-  // Zoom libre (tipo Google Maps, sin pan): zoomScale aleja del centro del canvas
-  // a los marcadores/obstáculos/ruta según el zoom actual (1 = sin zoom, como antes
-  // de tener esta función). bgCropFraction recorta la imagen de fondo ya cargada
-  // para que se vea exactamente ese mismo zoom mientras llega un tile más detallado.
+  // Zoom libre tipo Google Maps: zoomScale aleja del punto de enfoque a los
+  // marcadores/obstáculos/ruta según el zoom actual (1 = sin zoom). bgCropFraction
+  // recorta la imagen de fondo ya cargada para que se vea exactamente ese mismo zoom
+  // mientras llega un tile más detallado. viewCenter es el punto del espacio
+  // sintético 0..10 que queda fijo en el centro de pantalla al acercar/alejar — al
+  // acercar con la rueda hacia un punto bajo el cursor, deja de ser siempre (5,5)
+  // (el centro del mapa), así el zoom "viaja" hacia donde apunta el mouse en vez de
+  // siempre volver a donde esté EVA-01/el centro.
   zoomScale: number;
   bgCropFraction: number;
+  viewCenter: [number, number];
+  // Span real (km) que cubre la imagen de fondo ya cargada — hace falta para saber
+  // cuántos píxeles de esa imagen corresponden al desplazamiento de viewCenter.
+  loadedTierSpanKm: number;
 }
 
 function drawHeadingTape(ctx: CanvasRenderingContext2D, width: number): void {
@@ -214,14 +271,22 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     stops,
     zoomScale,
     bgCropFraction,
+    viewCenter,
+    loadedTierSpanKm,
     liveImg,
   } = params;
 
-  // Cuando se muestra la cuadrícula métrica, el mapa se dibuja un poco más chico
-  // (MARGIN_LEFT/MARGIN_TOP) para dejar un margen propio donde sobresalen los
-  // números de los ejes — como una regla pegada al mapa, no encima de la imagen.
-  const MARGIN_TOP = showMetricGrid ? 24 : 0;
-  const MARGIN_LEFT = showMetricGrid ? 42 : 0;
+  const centerFracX = viewCenter[0] / dataset.widthMeters;
+  const centerFracY = viewCenter[1] / dataset.heightMeters;
+
+  // Cuánto hay que correr el recorte del mosaico ya cargado para que el punto de
+  // enfoque (viewCenter) quede centrado, como fracción del ancho/alto de esa imagen.
+  const bgOffsetFracX = ((centerFracX - 0.5) * REFERENCE_SPAN_KM) / loadedTierSpanKm;
+  const bgOffsetFracY = ((centerFracY - 0.5) * REFERENCE_SPAN_KM) / loadedTierSpanKm;
+
+  // Mismo margen de regla que usa clientPointToMapFrac para el hit-testing del mouse.
+  const MARGIN_TOP = showMetricGrid ? METRIC_GRID_MARGIN_TOP : 0;
+  const MARGIN_LEFT = showMetricGrid ? METRIC_GRID_MARGIN_LEFT : 0;
   const mapW = width - MARGIN_LEFT;
   const mapH = height - MARGIN_TOP;
 
@@ -230,8 +295,10 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   // de la vista es siempre el centro del área de mapa, no del canvas completo). A
   // zoomScale=1 es idéntico a la fórmula de siempre (v/ancho)*width, sólo que ahora
   // "ancho"/"alto" son los del área de mapa (dentro del margen de la regla).
-  const projX = (xm: number) => MARGIN_LEFT + projectFrac(xm, dataset.widthMeters, zoomScale) * mapW;
-  const projY = (ym: number) => MARGIN_TOP + projectFrac(ym, dataset.heightMeters, zoomScale) * mapH;
+  const projX = (xm: number) =>
+    MARGIN_LEFT + projectFrac(xm, dataset.widthMeters, zoomScale, centerFracX) * mapW;
+  const projY = (ym: number) =>
+    MARGIN_TOP + projectFrac(ym, dataset.heightMeters, zoomScale, centerFracY) * mapH;
   const projRx = (vm: number) => (vm / dataset.widthMeters) * mapW * zoomScale;
   const projRy = (vm: number) => (vm / dataset.heightMeters) * mapH * zoomScale;
 
@@ -274,8 +341,12 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     const ih = loadedImg.naturalHeight || loadedImg.height;
     const cropW = iw * bgCropFraction;
     const cropH = ih * bgCropFraction;
-    const sx = (iw - cropW) / 2;
-    const sy = (ih - cropH) / 2;
+    // Recorte centrado en viewCenter en vez de siempre en el medio de la imagen, para
+    // que el fondo "viaje" junto con los marcadores hacia donde se hizo zoom — sin
+    // esto, el punto de enfoque se movía pero el fondo se quedaba fijo, y el terreno
+    // real no coincidía con los marcadores fuera del centro.
+    const sx = Math.min(iw - cropW, Math.max(0, (iw - cropW) / 2 + bgOffsetFracX * iw));
+    const sy = Math.min(ih - cropH, Math.max(0, (ih - cropH) / 2 + bgOffsetFracY * ih));
     ctx.drawImage(loadedImg, sx, sy, cropW, cropH, MARGIN_LEFT, MARGIN_TOP, mapW, mapH);
     ctx.fillStyle = visionData.isLineMap
       ? 'rgba(15, 23, 42, 0.08)'
