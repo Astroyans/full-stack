@@ -21,6 +21,21 @@ import {
 import { MapLayerMode, renderTopographicMapCanvas } from './map/mapCanvasRenderer';
 import { d415MetersToMapMeters } from '../utils/imageVision';
 import { MAX_STOPS, ScientificStop } from '../data/stops';
+import {
+  activeTierForSpan,
+  bgCropFractionFor,
+  buildMarsMosaic,
+  DEFAULT_SPAN_KM,
+  degSpansForSpanKm,
+  DOLLFUS_CENTER,
+  MAX_SPAN_KM,
+  MIN_SPAN_KM,
+  projectFrac,
+  REFERENCE_SPAN_KM,
+  unprojectFrac,
+  ZOOM_STEP_FACTOR,
+  zoomScaleFor,
+} from '../utils/marsTiles';
 
 interface TopographicMap2DProps {
   dataset: MartianTerrainDataset;
@@ -115,123 +130,6 @@ const AstronautIcon: React.FC<{ size?: number; color: string }> = ({ size = 20, 
   </svg>
 );
 
-const CardWaveArt: React.FC<{ level: 'red' | 'yellow' | 'green' }> = ({ level }) => {
-  if (level === 'red') {
-    return (
-      <svg viewBox="0 0 240 34" preserveAspectRatio="none" style={{ width: '100%', height: '30px', display: 'block', marginTop: '4px' }}>
-        <defs>
-          <linearGradient id="redCardGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ef4444" stopOpacity="0.42" />
-            <stop offset="100%" stopColor="#7f1d1d" stopOpacity="0.05" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M0,26 Q28,6 58,20 T122,14 T186,22 T240,12 L240,34 L0,34 Z"
-          fill="url(#redCardGrad)"
-        />
-        <path
-          d="M0,26 Q28,6 58,20 T122,14 T186,22 T240,12"
-          fill="none"
-          stroke="#ef4444"
-          strokeWidth="1.2"
-          strokeDasharray="2,2"
-          strokeOpacity="0.75"
-        />
-        {/* Triángulo de peligro + ícono bio/radiación en la esquina inferior derecha */}
-        <g transform="translate(194, 12)" stroke="#ef4444" strokeWidth="1.3" fill="none" opacity="0.85">
-          <path d="M8,16 L15,3 L22,16 Z" />
-          <line x1="15" y1="7.5" x2="15" y2="11.5" />
-          <circle cx="15" cy="13.8" r="0.6" fill="#ef4444" />
-          <circle cx="33" cy="10" r="2.2" />
-          <path d="M30,5.5 A5.5,5.5 0 0 1 36,5.5" />
-          <path d="M37.5,11 A5.5,5.5 0 0 1 34.5,15.5" />
-          <path d="M28.5,11 A5.5,5.5 0 0 0 31.5,15.5" />
-        </g>
-      </svg>
-    );
-  }
-
-  if (level === 'yellow') {
-    return (
-      <svg viewBox="0 0 240 34" preserveAspectRatio="none" style={{ width: '100%', height: '30px', display: 'block', marginTop: '4px' }}>
-        <path
-          d="M0,28 C38,24 66,8 106,16 C146,24 182,28 240,16 L240,34 L0,34 Z"
-          fill="rgba(245, 158, 11, 0.22)"
-        />
-        <path d="M0,28 C38,24 66,8 106,16 C146,24 182,28 240,16" fill="none" stroke="#f59e0b" strokeWidth="1.1" strokeOpacity="0.7" />
-        <path d="M0,31 C42,27 72,13 112,20 C152,27 188,30 240,21" fill="none" stroke="#fbbf24" strokeWidth="0.8" strokeOpacity="0.45" />
-        <path d="M0,24 C34,20 60,4 100,12 C140,20 176,25 240,11" fill="none" stroke="#d97706" strokeWidth="0.8" strokeOpacity="0.4" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 240 34" preserveAspectRatio="none" style={{ width: '100%', height: '30px', display: 'block', marginTop: '4px' }}>
-      <path
-        d="M0,24 Q35,12 72,21 T146,13 T212,22 L240,18 L240,34 L0,34 Z"
-        fill="rgba(16, 185, 129, 0.22)"
-      />
-      {Array.from({ length: 46 }).map((_, idx) => {
-        const x = idx * 4.5 + 2;
-        const h = 6 + Math.sin(idx * 0.42) * 5 + Math.cos(idx * 0.9) * 3;
-        return (
-          <line
-            key={idx}
-            x1={x}
-            y1={33}
-            x2={x}
-            y2={33 - Math.max(2, h)}
-            stroke="#10b981"
-            strokeWidth="1.3"
-            strokeOpacity="0.48"
-          />
-        );
-      })}
-      <path d="M206,32 L217,17 L224,25 L230,20 L238,32 Z" fill="#10b981" fillOpacity="0.65" />
-    </svg>
-  );
-};
-
-const CardHeaderIcon: React.FC<{ level: 'red' | 'yellow' | 'green' }> = ({ level }) => {
-  if (level === 'red') {
-    return (
-      <svg viewBox="0 0 24 22" width="18" height="17" fill="none">
-        <path d="M12 2L22 19H2L12 2Z" fill="#ef4444" stroke="#fca5a5" strokeWidth="1" />
-        <line x1="12" y1="8" x2="12" y2="13.5" stroke="#1f2937" strokeWidth="2" strokeLinecap="round" />
-        <circle cx="12" cy="16.5" r="1.1" fill="#1f2937" />
-      </svg>
-    );
-  }
-  if (level === 'yellow') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <svg viewBox="0 0 24 22" width="18" height="17" fill="none">
-          <path
-            d="M6.5 14.5H17.5A3.5 3.5 0 0 0 18 7.6 5 5 0 0 0 8.3 6.5 3.8 3.8 0 0 0 6.5 14.5Z"
-            fill="#facc15"
-          />
-          <polyline points="11,15 9.5,18.5 12,18.5 10.5,21.5" stroke="#facc15" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          <line x1="7" y1="16.5" x2="5.8" y2="19.5" stroke="#facc15" strokeWidth="1.3" strokeLinecap="round" />
-          <line x1="15.5" y1="16.5" x2="14.3" y2="19.5" stroke="#facc15" strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-        <svg viewBox="0 0 24 22" width="17" height="16" fill="none">
-          <path d="M12 2L22 19H2L12 2Z" fill="#facc15" />
-          <line x1="12" y1="8" x2="12" y2="13.5" stroke="#1f2937" strokeWidth="2" strokeLinecap="round" />
-          <circle cx="12" cy="16.5" r="1.1" fill="#1f2937" />
-        </svg>
-      </div>
-    );
-  }
-  return (
-    <svg viewBox="0 0 36 22" width="28" height="17" fill="none">
-      <ellipse cx="10" cy="16.5" rx="7" ry="2.6" stroke="#34d399" strokeWidth="1.4" />
-      <path d="M6 12C6 9.5 14 9.5 14 12" stroke="#34d399" strokeWidth="1.3" strokeLinecap="round" />
-      <path d="M20 18L26 8L33 18Z" fill="#34d399" fillOpacity="0.85" />
-      <path d="M15 18L20 11L25 18Z" fill="#10b981" />
-    </svg>
-  );
-};
-
 const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = ({
   profile,
   maxSlopeDeg,
@@ -289,7 +187,10 @@ const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = 
     { y: H - padB - 2, text: '-1800 m' },
   ];
 
-  const xLabels = ['0 km', '2 km', '4 km', '6 km', '8 km'];
+  // Etiquetas reales del eje X a partir de la distancia total del perfil (nada inventado):
+  // el perfil ya trae su distancia acumulada en profile[i].dist.
+  const formatDist = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)} km` : `${Math.round(v)} m`);
+  const xLabels = [0, 0.25, 0.5, 0.75, 1].map((f) => formatDist(maxDist * f));
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: '132px', display: 'block' }}>
@@ -392,7 +293,7 @@ const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = 
       {xLabels.map((xl, idx) => {
         const x = padL + (idx / (xLabels.length - 1)) * (W - padL - padR);
         return (
-          <g key={xl}>
+          <g key={idx}>
             <line x1={x} y1={H - padB} x2={x} y2={H - padB + 3} stroke="rgba(148, 163, 184, 0.5)" strokeWidth="1" />
             <text
               x={x}
@@ -411,108 +312,284 @@ const ElevationChart: React.FC<{ profile: ElevPoint[]; maxSlopeDeg: number }> = 
   );
 };
 
-const EcgBoxWave: React.FC = () => (
-  <div
-    style={{
-      position: 'relative',
-      width: '100%',
-      height: '26px',
-      overflow: 'hidden',
-      backgroundImage:
-        'linear-gradient(to right, rgba(45,212,191,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(45,212,191,0.08) 1px, transparent 1px)',
-      backgroundSize: '8px 8px',
-      borderRadius: '3px',
-    }}
-  >
-    <style>{`
-      @keyframes ecgScroll {
-        from { transform: translateX(0); }
-        to { transform: translateX(-50%); }
-      }
-    `}</style>
-    <div style={{ display: 'flex', width: '200%', height: '100%', animation: 'ecgScroll 1.8s linear infinite' }}>
-      <svg viewBox="0 0 220 26" preserveAspectRatio="none" style={{ width: '50%', height: '26px', display: 'block', flexShrink: 0 }}>
-        <polyline points={ECG_POINTS} fill="none" stroke="#34d399" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
-      <svg viewBox="0 0 220 26" preserveAspectRatio="none" style={{ width: '50%', height: '26px', display: 'block', flexShrink: 0 }}>
-        <polyline points={ECG_POINTS} fill="none" stroke="#34d399" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
-    </div>
-  </div>
-);
+const MONO_READOUT_FONT =
+  '"JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, monospace';
 
-const StatusIconsCluster: React.FC<{ level: number }> = ({ level }) => {
-  const pct = Math.max(15, Math.min(100, level));
+const ClinicalEcgTrace: React.FC<{ isElevated?: boolean; bpm?: number }> = ({
+  isElevated = false,
+  bpm = 75,
+}) => {
+  const strokeColor = isElevated ? '#e5a024' : '#6ca696';
+  const clampedBpm = Math.max(40, Math.min(180, bpm));
+  // Dos complejos P-QRS-T por barrido completo, sincronizados con los BPM reales
+  const sweepDurationSec = Number(((60 / clampedBpm) * 2).toFixed(2));
+  const wavePath =
+    'M 0,14 L 10,14 L 13,11.8 L 16,14 L 21,14 L 23.5,17.2 L 27,3.2 L 30.5,18.2 L 33.5,10.5 L 37,14 L 54,14 L 64,14 L 67,11.8 L 70,14 L 75,14 L 77.5,17.2 L 81,3.2 L 84.5,18.2 L 87.5,10.5 L 91,14 L 108,14';
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-      {/* Bluetooth */}
-      <svg viewBox="0 0 12 16" width="10" height="13" fill="none" stroke="#5eead4" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="2.5,4.5 9.5,11.5 6,15 6,1 9.5,4.5 2.5,11.5" />
-      </svg>
-      {/* Wi-Fi */}
-      <svg viewBox="0 0 16 14" width="13" height="11" fill="none" stroke="#5eead4" strokeWidth="1.4" strokeLinecap="round">
-        <path d="M1.5 5.2a10 10 0 0 1 13 0" />
-        <path d="M4 8a6.5 6.5 0 0 1 8 0" />
-        <circle cx="8" cy="11" r="1" fill="#5eead4" />
-      </svg>
-      {/* Batería verde */}
-      <svg viewBox="0 0 24 13" width="20" height="11">
-        <rect x="1" y="1" width="19" height="11" rx="2" fill="none" stroke="#5eead4" strokeWidth="1.3" />
-        <rect x="21" y="4" width="2" height="5" rx="0.8" fill="#5eead4" />
-        <rect x="2.8" y="2.8" width={Math.max(2, (pct / 100) * 15.4)} height="7.4" rx="1" fill="#22c55e" />
-      </svg>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '20px',
+        overflow: 'hidden',
+      }}
+    >
+      <style>{`
+        @keyframes ecgTraceSweep {
+          0% {
+            stroke-dashoffset: 160;
+          }
+          100% {
+            stroke-dashoffset: 0;
+          }
+        }
+        @keyframes ecgScrollLoop {
+          0% {
+            transform: translateX(0);
+          }
+          100% {
+            transform: translateX(-50%);
+          }
+        }
+        @keyframes plssHeartPulse {
+          0%, 100% {
+            transform: scale(1);
+            stroke: #7d899b;
+          }
+          14% {
+            transform: scale(1.18);
+            stroke: ${strokeColor};
+          }
+          28% {
+            transform: scale(1);
+            stroke: #7d899b;
+          }
+          42% {
+            transform: scale(1.1);
+            stroke: ${strokeColor};
+          }
+          58% {
+            transform: scale(1);
+            stroke: #7d899b;
+          }
+        }
+      `}</style>
+
+      {/* Trazo continuo de latidos desplazándose al ritmo del pulso con desvanecimiento lateral */}
+      <div
+        style={{
+          display: 'flex',
+          width: '200%',
+          height: '20px',
+          animation: `ecgScrollLoop ${sweepDurationSec}s linear infinite`,
+          WebkitMaskImage:
+            'linear-gradient(90deg, transparent 0%, #000 10%, #000 88%, transparent 100%)',
+          maskImage:
+            'linear-gradient(90deg, transparent 0%, #000 10%, #000 88%, transparent 100%)',
+        }}
+      >
+        <svg
+          viewBox="0 0 108 20"
+          preserveAspectRatio="none"
+          style={{ width: '50%', height: '20px', display: 'block', flexShrink: 0, overflow: 'visible' }}
+        >
+          <path
+            d={wavePath}
+            fill="none"
+            stroke={strokeColor}
+            strokeOpacity="0.22"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d={wavePath}
+            fill="none"
+            stroke={strokeColor}
+            strokeWidth="1.45"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="52 28"
+            style={{
+              animation: `ecgTraceSweep ${sweepDurationSec}s linear infinite`,
+            }}
+          />
+        </svg>
+        <svg
+          viewBox="0 0 108 20"
+          preserveAspectRatio="none"
+          style={{ width: '50%', height: '20px', display: 'block', flexShrink: 0, overflow: 'visible' }}
+        >
+          <path
+            d={wavePath}
+            fill="none"
+            stroke={strokeColor}
+            strokeOpacity="0.22"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d={wavePath}
+            fill="none"
+            stroke={strokeColor}
+            strokeWidth="1.45"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray="52 28"
+            style={{
+              animation: `ecgTraceSweep ${sweepDurationSec}s linear infinite`,
+            }}
+          />
+        </svg>
+      </div>
     </div>
   );
 };
 
-// Fila de la leyenda: un swatch (igual símbolo/color que el mapa) + descripción corta.
-const LegendRow: React.FC<{ swatch: React.ReactNode; label: string; desc: string }> = ({
-  swatch,
-  label,
-  desc,
-}) => (
-  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-    <div style={{ width: '22px', flexShrink: 0, display: 'flex', justifyContent: 'center', paddingTop: '1px' }}>
+/**
+ * Medidor lineal tipo píldora con marca vertical de umbral (25% / 30%).
+ */
+const PlssLinearGauge: React.FC<{
+  valuePct: number;
+  minThresholdPct: number;
+  fillColor: string;
+}> = ({ valuePct, minThresholdPct, fillColor }) => {
+  const clamped = Math.max(0, Math.min(100, valuePct));
+
+  return (
+    <div style={{ position: 'relative', height: '12px', display: 'flex', alignItems: 'center' }}>
+      {/* Pista en píldora */}
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '5.5px',
+          background: '#232936',
+          borderRadius: '999px',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.max(2, clamped)}%`,
+            height: '100%',
+            background: fillColor,
+            borderRadius: '999px',
+            transition: 'width 240ms ease-out, background-color 200ms ease',
+          }}
+        />
+      </div>
+
+      {/* Marca vertical de umbral que cruza la barra */}
+      <div
+        title={`Umbral: ${minThresholdPct}%`}
+        style={{
+          position: 'absolute',
+          left: `${minThresholdPct}%`,
+          top: '0px',
+          width: '1.5px',
+          height: '12px',
+          background: '#94a3b8',
+          transform: 'translateX(-0.75px)',
+          pointerEvents: 'none',
+        }}
+      />
+    </div>
+  );
+};
+
+// Fila de la leyenda: celda de muestra cartográfica uniforme + etiqueta y nota concisa.
+const LegendRow: React.FC<{
+  swatch: React.ReactNode;
+  label: string;
+  desc: string;
+  isLast?: boolean;
+}> = ({ swatch, label, desc, isLast = false }) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '7.5px 12px',
+      borderBottom: isLast ? 'none' : '1px solid #142338',
+    }}
+  >
+    <div
+      style={{
+        width: '32px',
+        height: '24px',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#060d18',
+        border: '1px solid #182b44',
+        borderRadius: '4px',
+        boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.6)',
+      }}
+    >
       {swatch}
     </div>
-    <div style={{ lineHeight: 1.3 }}>
-      <div style={{ fontSize: '11px', fontWeight: 700, color: '#f1f5f9' }}>{label}</div>
-      <div style={{ fontSize: '10px', color: '#94a3b8' }}>{desc}</div>
+    <div style={{ lineHeight: 1.25, minWidth: 0 }}>
+      <div style={{ fontSize: '11.5px', fontWeight: 600, color: '#f1f5f9' }}>{label}</div>
+      <div style={{ fontSize: '10.5px', color: '#8a9bb2', marginTop: '1.5px' }}>{desc}</div>
     </div>
   </div>
 );
 
-// Panel de Leyenda: documenta, con el mismo símbolo y color exactos, lo que ya se dibuja
-// por defecto en el mapa (ruta, EVA-01, destino, dron + círculo de escaneo, obstáculos).
+// Panel de Leyenda: clave cartográfica estructurada con simbología aeroespacial/USGS.
 const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, onToggle }) => (
   <div style={{ position: 'absolute', left: '14px', top: '14px', zIndex: 7 }}>
     {!open ? (
       <button
         onClick={onToggle}
-        title="Mostrar leyenda"
+        title="Mostrar simbología del mapa"
         style={{
-          background: 'rgba(10, 18, 30, 0.82)',
-          border: '1px solid rgba(56, 189, 248, 0.55)',
-          borderRadius: '6px',
-          color: '#e2e8f0',
-          fontSize: '11px',
-          fontWeight: 600,
-          padding: '5px 10px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '7px',
+          background: 'rgba(10, 20, 34, 0.92)',
+          border: '1px solid #1e3450',
+          borderRadius: '5px',
+          color: '#f1f5f9',
+          fontSize: '11.5px',
+          fontWeight: 500,
+          padding: '6px 11px',
           cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+          boxShadow: '0 4px 14px rgba(2, 6, 14, 0.55)',
         }}
       >
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polygon
+            points="8,1.8 14.2,5.2 8,8.6 1.8,5.2"
+            stroke="#38bdf8"
+            strokeWidth="1.25"
+            fill="rgba(56, 189, 248, 0.14)"
+          />
+          <polyline points="1.8,8.5 8,11.9 14.2,8.5" stroke="#8a9bb2" strokeWidth="1.2" />
+          <polyline points="1.8,11.4 8,14.6 14.2,11.4" stroke="#64748b" strokeWidth="1.1" />
+        </svg>
         Leyenda
       </button>
     ) : (
-      <div
+      <section
+        aria-label="Simbología del mapa"
         style={{
-          width: '210px',
-          background: 'rgba(8, 16, 28, 0.82)',
-          border: '1px solid rgba(56, 189, 248, 0.55)',
-          borderRadius: '8px',
-          padding: '10px 11px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.55)',
+          width: '248px',
+          background: 'rgba(10, 20, 34, 0.96)',
+          border: '1px solid #1e3450',
+          borderRadius: '6px',
+          overflow: 'hidden',
+          boxShadow: '0 10px 28px rgba(2, 6, 14, 0.72)',
         }}
       >
         <div
@@ -520,19 +597,23 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            marginBottom: '8px',
+            padding: '8px 12px',
+            background: '#0d192b',
+            borderBottom: '1px solid #182940',
           }}
         >
-          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#38bdf8' }}>Leyenda</span>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#f1f5f9' }}>
+            Simbología del mapa
+          </span>
           <button
             onClick={onToggle}
             title="Ocultar leyenda"
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#94a3b8',
+              color: '#8a9bb2',
               cursor: 'pointer',
-              fontSize: '13px',
+              fontSize: '12px',
               lineHeight: 1,
               padding: '2px 4px',
             }}
@@ -541,65 +622,172 @@ const MapLegend: React.FC<{ open: boolean; onToggle: () => void }> = ({ open, on
           </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {/* 1. Ruta segura: corredor de seguridad + traza curva punteada + vector de avance */}
           <LegendRow
             label="Ruta segura"
-            desc="Camino calculado por el host"
+            desc="Corredor y traza calculada por el host"
             swatch={
-              <svg viewBox="0 0 22 10" width="22" height="10">
-                <line x1="1" y1="5" x2="21" y2="5" stroke="#4ade80" strokeWidth="2.4" strokeDasharray="4,3" strokeLinecap="round" />
+              <svg viewBox="0 0 28 18" width="26" height="17" fill="none">
+                <path
+                  d="M3 13.5 C9 13.5, 11 4.5, 22 4.5"
+                  stroke="rgba(52, 211, 153, 0.22)"
+                  strokeWidth="6.5"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M3 13.5 C9 13.5, 11 4.5, 22 4.5"
+                  stroke="#4ade80"
+                  strokeWidth="1.8"
+                  strokeDasharray="3,2.5"
+                  strokeLinecap="round"
+                />
+                <polyline
+                  points="19.5,2.2 23.5,4.5 19.5,6.8"
+                  stroke="#4ade80"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             }
           />
+
+          {/* 2. EVA-01: baliza táctica con 4 muescas cardinales y núcleo activo */}
           <LegendRow
             label="EVA-01"
-            desc="Posición actual del astronauta"
+            desc="Posición actual en superficie"
             swatch={
-              <svg viewBox="0 0 16 16" width="16" height="16">
-                <circle cx="8" cy="8" r="6" fill="#0b192c" stroke="#38bdf8" strokeWidth="2.2" />
+              <svg viewBox="0 0 22 22" width="19" height="19" fill="none">
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="8.2"
+                  stroke="rgba(56, 189, 248, 0.35)"
+                  strokeWidth="1"
+                />
+                <line x1="11" y1="1.2" x2="11" y2="3.6" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
+                <line x1="11" y1="18.4" x2="11" y2="20.8" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
+                <line x1="1.2" y1="11" x2="3.6" y2="11" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
+                <line x1="18.4" y1="11" x2="20.8" y2="11" stroke="#38bdf8" strokeWidth="1.3" strokeLinecap="round" />
+                <circle cx="11" cy="11" r="5" fill="#0b192c" stroke="#38bdf8" strokeWidth="1.8" />
+                <circle cx="11" cy="11" r="2" fill="#38bdf8" />
               </svg>
             }
           />
+
+          {/* 3. Destino: retícula romboidal de objetivo con mira central */}
           <LegendRow
             label="Destino"
-            desc="Punto objetivo de la caminata"
+            desc="Objetivo de caminata (clic izq.)"
             swatch={
-              <svg viewBox="0 0 16 16" width="16" height="16">
-                <circle cx="8" cy="8" r="6" fill="#1c1917" stroke="#f59e0b" strokeWidth="2.2" />
+              <svg viewBox="0 0 22 22" width="19" height="19" fill="none">
+                <polygon
+                  points="11,2.2 19.8,11 11,19.8 2.2,11"
+                  fill="rgba(245, 158, 11, 0.14)"
+                  stroke="#f59e0b"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <line x1="11" y1="5.8" x2="11" y2="8.2" stroke="#fbbf24" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="11" y1="13.8" x2="11" y2="16.2" stroke="#fbbf24" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="5.8" y1="11" x2="8.2" y2="11" stroke="#fbbf24" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="13.8" y1="11" x2="16.2" y2="11" stroke="#fbbf24" strokeWidth="1.2" strokeLinecap="round" />
+                <circle cx="11" cy="11" r="2" fill="#fbbf24" />
               </svg>
             }
           />
-          <LegendRow
-            label="Dron y radio de escaneo"
-            desc="Posición del dron y zona cubierta"
-            swatch={
-              <svg viewBox="0 0 22 22" width="22" height="22">
-                <circle cx="11" cy="11" r="10" fill="rgba(168, 85, 247, 0.25)" stroke="rgba(192, 132, 252, 0.55)" strokeWidth="1.3" />
-                <circle cx="11" cy="11" r="3" fill="#c084fc" />
-              </svg>
-            }
-          />
-          <LegendRow
-            label="Obstáculo / cráter"
-            desc="Zona de riesgo detectada"
-            swatch={
-              <svg viewBox="0 0 16 16" width="16" height="16">
-                <ellipse cx="8" cy="8" rx="6.5" ry="5" fill="rgba(239, 68, 68, 0.18)" stroke="rgba(248, 113, 113, 0.9)" strokeWidth="1.4" />
-              </svg>
-            }
-          />
+
+          {/* 4. Parada científica: estación geológica hexagonal con índice tabular */}
           <LegendRow
             label="Parada científica"
-            desc="Clic derecho agrega (máx. 4); clic derecho sobre ella la borra"
+            desc="Clic der. agrega o borra (máx. 4)"
             swatch={
-              <svg viewBox="0 0 16 16" width="16" height="16">
-                <circle cx="8" cy="8" r="6" fill="rgba(8, 23, 38, 0.92)" stroke="#38bdf8" strokeWidth="2" />
-                <text x="8" y="8.5" textAnchor="middle" dominantBaseline="middle" fontSize="7" fontWeight="700" fill="#f8fafc">1</text>
+              <svg viewBox="0 0 22 22" width="19" height="19" fill="none">
+                <polygon
+                  points="11,2 18.8,6.5 18.8,15.5 11,20 3.2,15.5 3.2,6.5"
+                  fill="#0b1b2e"
+                  stroke="#38bdf8"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <polygon
+                  points="11,4.2 16.8,7.6 16.8,14.4 11,17.8 5.2,14.4 5.2,7.6"
+                  stroke="rgba(248, 250, 252, 0.25)"
+                  strokeWidth="0.8"
+                />
+                <text
+                  x="11"
+                  y="11.6"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="8.5"
+                  fontWeight="700"
+                  fill="#f8fafc"
+                  style={{ fontVariantNumeric: 'tabular-nums' }}
+                >
+                  1
+                </text>
+              </svg>
+            }
+          />
+
+          {/* 5. Dron y cobertura: barrido cónico de radar + silueta aérea */}
+          <LegendRow
+            label="Dron y cobertura"
+            desc="Posición aérea y radio de escaneo"
+            swatch={
+              <svg viewBox="0 0 22 22" width="19" height="19" fill="none">
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="8.8"
+                  fill="rgba(168, 85, 247, 0.16)"
+                  stroke="rgba(192, 132, 252, 0.72)"
+                  strokeWidth="1.2"
+                  strokeDasharray="2.5,2"
+                />
+                <path
+                  d="M11,11 L17.2,4.8 A8.8,8.8 0 0,1 19.8,11 Z"
+                  fill="rgba(192, 132, 252, 0.34)"
+                />
+                <line x1="8.2" y1="8.2" x2="13.8" y2="13.8" stroke="#e9d5ff" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="13.8" y1="8.2" x2="8.2" y2="13.8" stroke="#e9d5ff" strokeWidth="1.2" strokeLinecap="round" />
+                <circle cx="11" cy="11" r="2.2" fill="#c084fc" stroke="#2e1065" strokeWidth="0.9" />
+              </svg>
+            }
+          />
+
+          {/* 6. Obstáculo o cráter: contorno planetario USGS con muescas interiores (hachures) */}
+          <LegendRow
+            isLast
+            label="Obstáculo o cráter"
+            desc="Depresión o terreno de riesgo"
+            swatch={
+              <svg viewBox="0 0 24 18" width="22" height="16" fill="none">
+                <ellipse
+                  cx="12"
+                  cy="9"
+                  rx="9.2"
+                  ry="6.2"
+                  fill="rgba(239, 68, 68, 0.16)"
+                  stroke="#f87171"
+                  strokeWidth="1.4"
+                />
+                {/* Muescas topográficas hacia el interior de la depresión */}
+                <line x1="12" y1="2.8" x2="12" y2="5.1" stroke="#f87171" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="12" y1="15.2" x2="12" y2="12.9" stroke="#f87171" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="2.8" y1="9" x2="5.2" y2="9" stroke="#f87171" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="21.2" y1="9" x2="18.8" y2="9" stroke="#f87171" strokeWidth="1.2" strokeLinecap="round" />
+                <line x1="5.6" y1="4.6" x2="7.3" y2="6.1" stroke="#f87171" strokeWidth="1.1" strokeLinecap="round" />
+                <line x1="18.4" y1="4.6" x2="16.7" y2="6.1" stroke="#f87171" strokeWidth="1.1" strokeLinecap="round" />
+                <line x1="5.6" y1="13.4" x2="7.3" y2="11.9" stroke="#f87171" strokeWidth="1.1" strokeLinecap="round" />
+                <line x1="18.4" y1="13.4" x2="16.7" y2="11.9" stroke="#f87171" strokeWidth="1.1" strokeLinecap="round" />
               </svg>
             }
           />
         </div>
-      </div>
+      </section>
     )}
   </div>
 );
@@ -651,10 +839,75 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
   const [maxStopsNotice, setMaxStopsNotice] = useState<boolean>(false);
   const [selectedStop, setSelectedStop] = useState<ScientificStop | null>(null);
 
+  // Arranca centrado en el cráter Dollfus (21.8°S, 4.3°W); se actualiza con el mouse.
   const [hoverCoords, setHoverCoords] = useState<{ lat: string; lon: string }>({
-    lat: '-11.49907',
-    lon: '6.20995°',
+    lat: DOLLFUS_CENTER.lat.toFixed(5),
+    lon: `${DOLLFUS_CENTER.lon.toFixed(5)}°`,
   });
+
+  // Zoom libre y continuo (tipo Google Maps, sin arrastrar/pan): rueda del mouse o
+  // los botones +/- acercan/alejan hacia el centro del mapa, con tiles reales de
+  // Mars Trek (cráter Dollfus) de fondo. No hay niveles con nombre: currentSpanKm es
+  // el ancho/alto real (en km) que cubre la vista en este momento. Los marcadores
+  // (EVA-01, Destino, obstáculos, paradas, ruta) se reproyectan con el mismo zoom,
+  // así que se mueven con el terreno en vez de quedarse pegados a la pantalla.
+  const [currentSpanKm, setCurrentSpanKm] = useState<number>(DEFAULT_SPAN_KM);
+  const [loadedTierSpanKm, setLoadedTierSpanKm] = useState<number>(REFERENCE_SPAN_KM);
+  const [zoomTilesLoading, setZoomTilesLoading] = useState<boolean>(false);
+  const [zoomTilesFailed, setZoomTilesFailed] = useState<boolean>(false);
+  const lastRequestedTierRef = useRef<number | null>(null);
+
+  const zoomScale = zoomScaleFor(currentSpanKm);
+  const bgCropFraction = bgCropFractionFor(currentSpanKm, loadedTierSpanKm);
+
+  const changeZoom = (dir: 1 | -1) => {
+    setCurrentSpanKm((prev) => {
+      const next = dir === 1 ? prev / ZOOM_STEP_FACTOR : prev * ZOOM_STEP_FACTOR;
+      return Math.min(MAX_SPAN_KM, Math.max(MIN_SPAN_KM, next));
+    });
+  };
+
+  // Sólo recarga tiles reales cuando el zoom cruza a un escalón de detalle distinto
+  // (TIERS_KM); entre medio, el zoom se ve recortando/escalando el mismo mosaico ya
+  // cargado (sin red), igual que un visor de mapas real mientras llega más detalle.
+  useEffect(() => {
+    const neededTier = activeTierForSpan(currentSpanKm);
+    if (lastRequestedTierRef.current === neededTier) return;
+    lastRequestedTierRef.current = neededTier;
+
+    let cancelled = false;
+    setZoomTilesLoading(true);
+    setZoomTilesFailed(false);
+    buildMarsMosaic(neededTier)
+      .then((res) => {
+        if (cancelled) return;
+        setImageSrc(res.dataUrl);
+        setLoadedTierSpanKm(res.spanKm);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setZoomTilesFailed(true);
+        setImageSrc('/mars-terrain.jpg');
+        setLoadedTierSpanKm(REFERENCE_SPAN_KM);
+      })
+      .finally(() => {
+        if (!cancelled) setZoomTilesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSpanKm]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      changeZoom(e.deltaY < 0 ? 1 : -1);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     fetch('/data/real_map_state.json')
@@ -912,6 +1165,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       dronePadPos,
       evaPos,
       stops,
+      zoomScale,
+      bgCropFraction,
     });
   }, [
     dataset,
@@ -927,10 +1182,13 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     targetPoint,
     safeRoute,
     stops,
+    zoomScale,
+    bgCropFraction,
   ]);
 
   // Convierte la posición del mouse/clic en el canvas a las mismas "unidades" (0..10)
-  // que usa el resto del mapa para EVA-01, Destino, el Dron y ahora las paradas.
+  // que usa el resto del mapa para EVA-01, Destino, el Dron y ahora las paradas —
+  // deshaciendo el mismo zoom (centrado, sin pan) con el que se dibujan.
   const eventToMeters = (e: { clientX: number; clientY: number }): [number, number] | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -938,8 +1196,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     const relX = Math.max(0.04, Math.min(0.96, (e.clientX - rect.left) / rect.width));
     const relY = Math.max(0.05, Math.min(0.95, (e.clientY - rect.top) / rect.height));
     return [
-      Number((relX * dataset.widthMeters).toFixed(2)),
-      Number((relY * dataset.heightMeters).toFixed(2)),
+      Number(unprojectFrac(relX, dataset.widthMeters, zoomScale).toFixed(2)),
+      Number(unprojectFrac(relY, dataset.heightMeters, zoomScale).toFixed(2)),
     ];
   };
 
@@ -1028,58 +1286,81 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     const rect = canvas.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / rect.width;
     const relY = (e.clientY - rect.top) / rect.height;
-    const lat = (-11.45 - relY * 0.14).toFixed(5);
-    const lon = (6.15 + relX * 0.12).toFixed(5) + '°';
+    // Lat/Lon reales según el zoom libre activo, centradas en el cráter Dollfus
+    // (no un desplazamiento inventado): la vista cubre currentSpanKm de lado real.
+    const { latSpanDeg, lonSpanDeg } = degSpansForSpanKm(currentSpanKm);
+    const lat = (DOLLFUS_CENTER.lat + latSpanDeg * (0.5 - relY)).toFixed(5);
+    const lon = (DOLLFUS_CENTER.lon + lonSpanDeg * (relX - 0.5)).toFixed(5) + '°';
     setHoverCoords({ lat, lon });
   };
 
-  // Las 3 tarjetas de Obstáculos & Pendientes (ALTO, MEDIO, BAJO) siguiendo el diseño del boceto
-  // y actualizándose si llegan razones en vivo del evaluador de riesgo.
+  // Registros tácticos de Obstáculos y Pendientes derivados de los datos reales de terreno y ruta
   const riskCards = useMemo(() => {
     const highReason = risk.reasons.find((r) => /CRÍTIC|BLOQUEADA|INSEGURA|EXTREMA/i.test(r));
     const medReason = risk.reasons.find((r) => !/CRÍTIC|BLOQUEADA|INSEGURA|EXTREMA/i.test(r));
 
+    const liveSlope = maxRouteSlopeDeg > 0 ? maxRouteSlopeDeg : droneData?.max_slope_deg ?? 28.4;
+    const obsCount = droneData?.obstacles?.length ?? 0;
+    const firstObsDist =
+      obsCount > 0 && droneData?.obstacles?.[0]?.distance_m != null
+        ? droneData.obstacles[0].distance_m
+        : 0.65;
+
     return [
       {
         level: 'red' as const,
-        badge: 'ALTO',
-        badgeColor: '#ef4444',
-        border: '#dc2626',
-        bg: 'linear-gradient(180deg, rgba(58, 12, 18, 0.94) 0%, rgba(98, 16, 24, 0.90) 100%)',
-        text: highReason
-          ? `Cuidado: ${highReason.toLowerCase()}`
-          : 'Cuidado: oxígeno del traje por debajo del 15%',
+        severityLabel: 'Crítico',
+        accent: '#e5484d',
+        badgeBg: 'rgba(229, 72, 77, 0.12)',
+        badgeBorder: 'rgba(229, 72, 77, 0.38)',
+        badgeText: '#f87171',
+        title: 'Pendiente pronunciada en sector',
+        metric: `${liveSlope.toFixed(1)}°`,
+        meta: 'Umbral máx. 25.0°',
+        action: highReason
+          ? highReason.charAt(0).toUpperCase() + highReason.slice(1).toLowerCase()
+          : 'Bordear cresta por el flanco oeste',
       },
       {
         level: 'yellow' as const,
-        badge: 'MEDIO',
-        badgeColor: '#facc15',
-        border: '#d97706',
-        bg: 'linear-gradient(180deg, rgba(54, 38, 10, 0.94) 0%, rgba(92, 64, 12, 0.90) 100%)',
-        text: medReason
-          ? `Cuidado: ${medReason.toLowerCase()}`
-          : 'Cuidado: se aproxima una tormenta de arena',
+        severityLabel: 'Precaución',
+        accent: '#e5a024',
+        badgeBg: 'rgba(229, 160, 36, 0.12)',
+        badgeBorder: 'rgba(229, 160, 36, 0.38)',
+        badgeText: '#fbbf24',
+        title: obsCount > 0 ? `Terreno irregular (${obsCount} ptos)` : 'Regolito suelto y depresiones',
+        metric: `${firstObsDist.toFixed(2)} m`,
+        meta: 'Radio de escaneo D415',
+        action: medReason
+          ? medReason.charAt(0).toUpperCase() + medReason.slice(1).toLowerCase()
+          : 'Reducir ritmo de marcha y mantener margen',
       },
       {
         level: 'green' as const,
-        badge: 'BAJO',
-        badgeColor: '#34d399',
-        border: '#10b981',
-        bg: 'linear-gradient(180deg, rgba(8, 44, 38, 0.94) 0%, rgba(12, 74, 62, 0.90) 100%)',
-        text: 'Cuidado: zona con muchos cráteres a 500m',
+        severityLabel: 'Despejado',
+        accent: '#2fb380',
+        badgeBg: 'rgba(47, 179, 128, 0.12)',
+        badgeBorder: 'rgba(47, 179, 128, 0.35)',
+        badgeText: '#6ee7b7',
+        title: 'Corredor de retorno al refugio',
+        metric: safeRoute.distanceMeters > 0 ? `${safeRoute.distanceMeters.toFixed(1)} m` : '9.2°',
+        meta: safeRoute.distanceMeters > 0 ? 'Distancia por ruta' : 'Pendiente media estable',
+        action: 'Superficie firme; mantener rumbo trazado',
       },
     ];
-  }, [risk]);
+  }, [risk, maxRouteSlopeDeg, droneData?.max_slope_deg, droneData?.obstacles, safeRoute.distanceMeters]);
 
   const cycleMapLayerMode = () => {
     setMapLayerMode(mapLayerMode === 'topo_lines' ? 'fusion_mars_d415' : 'topo_lines');
   };
 
-  // Valores de telemetría del traje (usa datos reales si están presentes, o los valores de referencia del boceto)
-  const o2Level = eva ? eva.suit_o2 : 14.2;
-  const heartRate = eva ? eva.heart_rate : 118;
-  const suitPressurePct = eva ? eva.battery : 84.0;
-  const isO2Critical = o2Level < 45;
+  // Valores de telemetría del traje (usa datos reales si están presentes, o los valores de referencia)
+  const o2Level = eva ? eva.suit_o2 : 87.0;
+  const heartRate = eva ? eva.heart_rate : 75;
+  const suitPressurePct = eva ? eva.battery : 96.1;
+  const isO2Critical = o2Level <= 25;
+  const isO2Warn = !isO2Critical && o2Level <= 40;
+  const isHrElevated = heartRate >= 135 || heartRate <= 50;
 
   return (
     <div
@@ -1097,245 +1378,651 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
         style={{ display: 'none' }}
       />
 
-      {/* Marco Táctico Unificado (Mapa + Barra Lateral Derecha en un solo bloque como en el boceto) */}
-      <div
+      {/* Encabezado Superior de Ancho Completo (ARES Flight Deck + Terminal táctica + Franja de contexto EVA) */}
+      <header
         style={{
+          background: '#080a0f',
           display: 'flex',
-          flexWrap: 'wrap',
-          background: '#081322',
-          border: '2px solid #0ea5e9',
-          borderRadius: '12px',
-          overflow: 'hidden',
-          boxShadow: '0 0 28px rgba(14, 165, 233, 0.18), 0 12px 32px rgba(0, 0, 0, 0.65)',
+          flexDirection: 'column',
+          position: 'relative',
         }}
       >
-        {/* Columna Izquierda: Encabezado de Misión + Mapa + Barra Inferior */}
+        {/* Fila 1: Barra superior ARES FLIGHT DECK de extremo a extremo */}
+        <div
+          style={{
+            borderBottom: '1px solid #151b26',
+            background: '#080a0f',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: '1480px',
+              margin: '0 auto',
+              padding: '12px 24px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            {/* Marca izquierda: Icono orbital + ARES FLIGHT DECK */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  background: '#0c1018',
+                  border: '1px solid #1c2434',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="19"
+                  height="19"
+                  fill="none"
+                  stroke="#cbd5e1"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="8" strokeOpacity="0.85" />
+                  <circle cx="12" cy="12" r="3.6" strokeOpacity="0.7" />
+                  <circle cx="15.8" cy="6.2" r="1.3" fill="#080a0f" stroke="#cbd5e1" strokeWidth="1.2" />
+                  <circle cx="8.2" cy="17.8" r="1.3" fill="#080a0f" stroke="#cbd5e1" strokeWidth="1.2" />
+                </svg>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '7px', lineHeight: 1.15 }}>
+                  <span
+                    style={{
+                      fontSize: '16px',
+                      fontWeight: 700,
+                      color: '#f8fafc',
+                      letterSpacing: '0.09em',
+                    }}
+                  >
+                    ARES
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      fontWeight: 400,
+                      color: '#8b98a9',
+                      letterSpacing: '0.14em',
+                    }}
+                  >
+                    FLIGHT DECK
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '8.5px',
+                    color: '#525e70',
+                    letterSpacing: '0.15em',
+                    marginTop: '3px',
+                  }}
+                >
+                  MARTIAN TACTICAL &amp; MISSION CONTROL
+                </div>
+              </div>
+            </div>
+
+            {/* Bloques derechos: IDENTIFICADOR DE MISIÓN | TIEMPO UNIVERSAL | ENLACE ACTIVO */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+              <div style={{ width: '1px', height: '30px', background: '#171f2e' }} />
+
+              {/* Identificador de misión */}
+              <div style={{ lineHeight: 1.25 }}>
+                <div
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '8.5px',
+                    color: '#5c6878',
+                    letterSpacing: '0.1em',
+                    marginBottom: '5px',
+                  }}
+                >
+                  IDENTIFICADOR DE MISIÓN
+                </div>
+                <div
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '11.5px',
+                    fontWeight: 500,
+                    letterSpacing: '0.05em',
+                    color: '#e2e8f0',
+                  }}
+                >
+                  MISIÓN: ARES-IV <span style={{ color: '#475569' }}>//</span> SECTOR DOLLFUS
+                </div>
+              </div>
+
+              {/* Tiempo universal */}
+              <div style={{ lineHeight: 1.15 }}>
+                <div
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '8.5px',
+                    color: '#5c6878',
+                    letterSpacing: '0.1em',
+                    marginBottom: '2px',
+                  }}
+                >
+                  TIEMPO UNIVERSAL
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                  <span
+                    style={{
+                      fontFamily: MONO_READOUT_FONT,
+                      fontVariantNumeric: 'tabular-nums slashed-zero',
+                      fontSize: '18px',
+                      fontWeight: 400,
+                      color: '#f1f5f9',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    {utcTime || '06:58:17'}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: MONO_READOUT_FONT,
+                      fontSize: '9px',
+                      color: '#64748b',
+                      letterSpacing: '0.06em',
+                    }}
+                  >
+                    UTC
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ width: '1px', height: '30px', background: '#171f2e' }} />
+
+              {/* Enlace activo + Selector de simulación telemétrica (abre el menú de conexión) */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <span
+                    style={{
+                      width: '5.5px',
+                      height: '5.5px',
+                      borderRadius: '50%',
+                      background: '#10b981',
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontFamily: MONO_READOUT_FONT,
+                      fontSize: '8.5px',
+                      fontWeight: 500,
+                      letterSpacing: '0.1em',
+                      color: '#10b981',
+                    }}
+                  >
+                    ENLACE ACTIVO
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+                  title="Configuración de enlace y fuente de mapa"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '9.5px',
+                    color: '#8b98a9',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 16 14"
+                    width="12"
+                    height="11"
+                    fill="none"
+                    stroke="#64748b"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                  >
+                    <circle cx="8" cy="7" r="1.3" fill="#64748b" />
+                    <path d="M5.2 4.4a4 4 0 0 0 0 5.2" />
+                    <path d="M10.8 4.4a4 4 0 0 1 0 5.2" />
+                    <path d="M3 2.4a7 7 0 0 0 0 9.2" />
+                    <path d="M13 2.4a7 7 0 0 1 0 9.2" />
+                  </svg>
+                  <span>SIMULACIÓN TELEMÉTRICA</span>
+                  <span style={{ fontSize: '10px', color: '#64748b' }}>⌄</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Contenedor centralizado para Fila 2 (Terminal táctica) y Fila 3 (Barra de contexto) */}
+        <div style={{ maxWidth: '1480px', width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+          {/* Fila 2: Terminal táctica | CARTOGRAFÍA & NAVEGACIÓN EVA (excluyendo Entorno simulado, ayuda y Exportar ruta) */}
+          <div
+            style={{
+              padding: '16px 24px 12px 24px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '11px',
+            }}
+          >
+            <svg
+              viewBox="0 0 18 18"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="#7d899b"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="1.5,4 6.5,2 11.5,4 16.5,2 16.5,14 11.5,16 6.5,14 1.5,16" />
+              <line x1="6.5" y1="2" x2="6.5" y2="14" />
+              <line x1="11.5" y1="4" x2="11.5" y2="16" />
+            </svg>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: '16px',
+                fontWeight: 600,
+                color: '#f1f5f9',
+                lineHeight: 1.2,
+              }}
+            >
+              Terminal táctica
+            </h1>
+            <span
+              aria-hidden="true"
+              style={{
+                width: '1px',
+                height: '14px',
+                background: '#1e2838',
+                display: 'inline-block',
+              }}
+            />
+            <span
+              style={{
+                fontFamily: MONO_READOUT_FONT,
+                fontSize: '9.5px',
+                color: '#64748b',
+                letterSpacing: '0.12em',
+              }}
+            >
+              CARTOGRAFÍA &amp; NAVEGACIÓN EVA
+            </span>
+          </div>
+
+          {/* Fila 3: Barra de contexto operativo de ancho completo */}
+          <div
+            style={{
+              margin: '0 24px 14px 24px',
+              padding: '9px 16px',
+              background: '#0c1018',
+              border: '1px solid #161e2c',
+              borderRadius: '6px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
+                <span
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '9px',
+                    color: '#5c6878',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  OPERACIÓN
+                </span>
+                <span style={{ fontSize: '11.5px', color: '#cbd5e1', fontWeight: 500 }}>
+                  Reconocimiento de superficie
+                </span>
+              </div>
+
+              <span style={{ width: '1px', height: '13px', background: '#1c2536', display: 'inline-block' }} />
+
+              <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
+                <span
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '9px',
+                    color: '#5c6878',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  UNIDAD EVA
+                </span>
+                <span
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '10.5px',
+                    color: '#e2e8f0',
+                    fontWeight: 600,
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  ASTRONAUTA 01
+                </span>
+              </div>
+
+              <span style={{ width: '1px', height: '13px', background: '#1c2536', display: 'inline-block' }} />
+
+              <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: '8px' }}>
+                <span
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontSize: '9px',
+                    color: '#5c6878',
+                    letterSpacing: '0.08em',
+                  }}
+                >
+                  ÁREA DE EXPLORACIÓN
+                </span>
+                <span
+                  style={{
+                    fontFamily: MONO_READOUT_FONT,
+                    fontVariantNumeric: 'tabular-nums slashed-zero',
+                    fontSize: '10.5px',
+                    color: '#e2e8f0',
+                    fontWeight: 600,
+                  }}
+                >
+                  100.00 m²
+                </span>
+              </div>
+
+              <span style={{ width: '1px', height: '13px', background: '#1c2536', display: 'inline-block' }} />
+            </div>
+
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  width: '5.5px',
+                  height: '5.5px',
+                  borderRadius: '50%',
+                  background: '#10b981',
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: MONO_READOUT_FONT,
+                  fontSize: '9px',
+                  color: '#8b98a9',
+                  letterSpacing: '0.09em',
+                }}
+              >
+                PLANIFICADOR ACTIVO
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Menú desplegable discreto con los controles de IP y Subir Imagen */}
+        {showSettingsMenu && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '56px',
+              right: '24px',
+              width: '310px',
+              background: 'rgba(11, 15, 24, 0.98)',
+              border: '1px solid #1e293b',
+              borderRadius: '8px',
+              padding: '12px',
+              zIndex: 25,
+              boxShadow: '0 12px 30px rgba(0, 0, 0, 0.8)',
+              fontSize: '11px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <strong style={{ color: '#38bdf8' }}>Enlace y Fuente de Mapa</strong>
+              <span style={{ color: isConnected ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                {isConnected ? '● CONECTADO' : '○ SIN CONEXIÓN'}
+              </span>
+            </div>
+
+            {onSwitchMode && (
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                <button
+                  onClick={() => onSwitchMode('local_esp')}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    padding: '5px 8px',
+                    borderRadius: '5px',
+                    border: mode === 'local_esp' ? '1px solid #38bdf8' : '1px solid #334155',
+                    background: mode === 'local_esp' ? '#0c4a6e' : '#1e293b',
+                    color: '#f8fafc',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                  }}
+                >
+                  <Radio size={12} /> ESP32
+                </button>
+                <button
+                  onClick={() => onSwitchMode('online_raspi')}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    padding: '5px 8px',
+                    borderRadius: '5px',
+                    border: mode === 'online_raspi' ? '1px solid #a855f7' : '1px solid #334155',
+                    background: mode === 'online_raspi' ? '#4c1d95' : '#1e293b',
+                    color: '#f8fafc',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                  }}
+                >
+                  <Server size={12} /> Raspi
+                </button>
+              </div>
+            )}
+
+            {customUrls && onChangeUrl && onApplyUrl && (
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={customUrls[mode]}
+                  onChange={(e) => onChangeUrl(e.target.value)}
+                  placeholder="ws://192.168.1.100:8765"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: '#020617',
+                    border: '1px solid #334155',
+                    borderRadius: '4px',
+                    color: '#e2e8f0',
+                    padding: '4px 7px',
+                    fontSize: '11px',
+                  }}
+                />
+                <button
+                  onClick={onApplyUrl}
+                  style={{
+                    background: '#ea580c',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '11px',
+                  }}
+                >
+                  Conectar
+                </button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {customUrls && (
+                <button
+                  onClick={() => fetchMapStateFromServer(customUrls[mode])}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '5px',
+                    background: '#1e3a8a',
+                    color: '#dbeafe',
+                    border: '1px solid #3b82f6',
+                    borderRadius: '5px',
+                    padding: '5px 8px',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                  }}
+                >
+                  <RefreshCw size={12} /> Sync D415
+                </button>
+              )}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  background: '#065f46',
+                  color: '#d1fae5',
+                  border: '1px solid #10b981',
+                  borderRadius: '5px',
+                  padding: '5px 8px',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                }}
+              >
+                <Upload size={12} /> Subir Mapa
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* Área de trabajo en 2 columnas debajo del encabezado de ancho completo */}
+      <div
+        style={{
+          maxWidth: '1480px',
+          margin: '0 auto',
+          padding: '0 24px 20px 24px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '14px',
+          boxSizing: 'border-box',
+        }}
+      >
+        {/* Columna Izquierda: Tarjeta de Cartografía de superficie + Mapa */}
         <div
           style={{
             flex: '2.5 1 620px',
             minWidth: '320px',
             display: 'flex',
             flexDirection: 'column',
-            borderRight: '1px solid #1e3a5f',
+            background: '#0b0e15',
+            border: '1px solid #161e2c',
+            borderRadius: '8px',
+            overflow: 'hidden',
             position: 'relative',
           }}
         >
-          {/* Encabezado integrado dentro del marco del mapa */}
+          {/* Barra superior de la tarjeta del mapa: Cartografía de superficie */}
           <div
             style={{
-              background: 'linear-gradient(90deg, #09192e 0%, #0b213d 100%)',
-              borderBottom: '1px solid #1e3a5f',
-              padding: '8px 16px',
+              padding: '9px 14px',
+              background: '#0c1018',
+              borderBottom: '1px solid #161e2c',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              position: 'relative',
+              gap: '10px',
             }}
           >
-            <div>
-              <div style={{ fontSize: '12px', letterSpacing: '0.3px', lineHeight: 1.25 }}>
-                <span style={{ color: '#38bdf8', fontWeight: 600 }}>Misión: </span>
-                <span style={{ color: '#e2e8f0', fontWeight: 500 }}>
-                  OPERACIONES SUPERFICIE ARES - IV
-                </span>
-              </div>
-              <div
-                style={{
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  color: '#ffffff',
-                  letterSpacing: '0.6px',
-                  marginTop: '1px',
-                }}
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              <svg
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="#64748b"
+                strokeWidth="1.3"
+                strokeLinecap="round"
               >
-                DOLLFUS
-              </div>
+                <circle cx="8" cy="8" r="5" />
+                <line x1="8" y1="1" x2="8" y2="3.5" />
+                <line x1="8" y1="12.5" x2="8" y2="15" />
+                <line x1="1" y1="8" x2="3.5" y2="8" />
+                <line x1="12.5" y1="8" x2="15" y2="8" />
+              </svg>
+              <span style={{ fontSize: '12px', color: '#cbd5e1', fontWeight: 500 }}>
+                Cartografía de superficie
+              </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ textAlign: 'right', lineHeight: 1.2 }}>
-                <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 600 }}>UTC</div>
-                <div
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '14px',
+                fontFamily: MONO_READOUT_FONT,
+                fontSize: '9px',
+                color: '#7d899b',
+                letterSpacing: '0.08em',
+              }}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '10px', height: '1.5px', background: '#38bdf8', display: 'inline-block' }} />
+                RUTA A*
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <span
                   style={{
-                    fontSize: '12px',
-                    color: '#f1f5f9',
-                    fontVariantNumeric: 'tabular-nums',
-                    fontWeight: 600,
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    border: '1.3px solid #f87171',
+                    display: 'inline-block',
                   }}
-                >
-                  {utcTime || '10:46:22'}
-                </div>
-              </div>
-
-              {/* Botón discreto para abrir la configuración de IP / Subir imagen */}
-              <button
-                onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-                title="Configuración de conexión IP y mapa"
-                style={{
-                  background: showSettingsMenu ? '#0284c7' : 'rgba(15, 23, 42, 0.7)',
-                  border: `1px solid ${isConnected ? '#22c55e' : '#334155'}`,
-                  color: '#e2e8f0',
-                  borderRadius: '6px',
-                  width: '28px',
-                  height: '28px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  padding: 0,
-                }}
-              >
-                <Settings size={14} />
-              </button>
+                />
+                CRÁTER
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <span
+                  style={{
+                    width: '10px',
+                    borderTop: '1.5px dashed #f59e0b',
+                    display: 'inline-block',
+                  }}
+                />
+                ESCARPE
+              </span>
             </div>
-
-            {/* Menú desplegable discreto con los controles de IP y Subir Imagen */}
-            {showSettingsMenu && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '52px',
-                  right: '14px',
-                  width: '310px',
-                  background: 'rgba(9, 19, 34, 0.97)',
-                  border: '1px solid #0ea5e9',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  zIndex: 20,
-                  boxShadow: '0 10px 25px rgba(0, 0, 0, 0.75)',
-                  fontSize: '11px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <strong style={{ color: '#38bdf8' }}>Enlace y Fuente de Mapa</strong>
-                  <span style={{ color: isConnected ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                    {isConnected ? '● CONECTADO' : '○ SIN CONEXIÓN'}
-                  </span>
-                </div>
-
-                {onSwitchMode && (
-                  <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                    <button
-                      onClick={() => onSwitchMode('local_esp')}
-                      style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px',
-                        padding: '5px 8px',
-                        borderRadius: '5px',
-                        border: mode === 'local_esp' ? '1px solid #38bdf8' : '1px solid #334155',
-                        background: mode === 'local_esp' ? '#0c4a6e' : '#1e293b',
-                        color: '#f8fafc',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                      }}
-                    >
-                      <Radio size={12} /> ESP32
-                    </button>
-                    <button
-                      onClick={() => onSwitchMode('online_raspi')}
-                      style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px',
-                        padding: '5px 8px',
-                        borderRadius: '5px',
-                        border: mode === 'online_raspi' ? '1px solid #a855f7' : '1px solid #334155',
-                        background: mode === 'online_raspi' ? '#4c1d95' : '#1e293b',
-                        color: '#f8fafc',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                      }}
-                    >
-                      <Server size={12} /> Raspi
-                    </button>
-                  </div>
-                )}
-
-                {customUrls && onChangeUrl && onApplyUrl && (
-                  <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                    <input
-                      type="text"
-                      value={customUrls[mode]}
-                      onChange={(e) => onChangeUrl(e.target.value)}
-                      placeholder="ws://192.168.1.100:8765"
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        background: '#020617',
-                        border: '1px solid #334155',
-                        borderRadius: '4px',
-                        color: '#e2e8f0',
-                        padding: '4px 7px',
-                        fontSize: '11px',
-                      }}
-                    />
-                    <button
-                      onClick={onApplyUrl}
-                      style={{
-                        background: '#ea580c',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '4px',
-                        padding: '4px 8px',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        fontSize: '11px',
-                      }}
-                    >
-                      Conectar
-                    </button>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {customUrls && (
-                    <button
-                      onClick={() => fetchMapStateFromServer(customUrls[mode])}
-                      style={{
-                        flex: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '5px',
-                        background: '#1e3a8a',
-                        color: '#dbeafe',
-                        border: '1px solid #3b82f6',
-                        borderRadius: '5px',
-                        padding: '5px 8px',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                      }}
-                    >
-                      <RefreshCw size={12} /> Sync D415
-                    </button>
-                  )}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '5px',
-                      background: '#065f46',
-                      color: '#d1fae5',
-                      border: '1px solid #10b981',
-                      borderRadius: '5px',
-                      padding: '5px 8px',
-                      cursor: 'pointer',
-                      fontSize: '11px',
-                    }}
-                  >
-                    <Upload size={12} /> Subir Mapa
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Área central del Mapa */}
@@ -1416,8 +2103,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               <div
                 style={{
                   position: 'absolute',
-                  left: `${Math.min(78, (pendingStopPos[0] / dataset.widthMeters) * 100)}%`,
-                  top: `${Math.min(80, (pendingStopPos[1] / dataset.heightMeters) * 100)}%`,
+                  left: `${Math.min(78, projectFrac(pendingStopPos[0], dataset.widthMeters, zoomScale) * 100)}%`,
+                  top: `${Math.min(80, projectFrac(pendingStopPos[1], dataset.heightMeters, zoomScale) * 100)}%`,
                   transform: 'translate(-10px, -10px)',
                   background: 'rgba(8, 17, 30, 0.97)',
                   border: '1.5px solid #38bdf8',
@@ -1534,8 +2221,8 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               <div
                 style={{
                   position: 'absolute',
-                  left: `${Math.min(76, (selectedStop.xm / dataset.widthMeters) * 100)}%`,
-                  top: `${Math.min(78, (selectedStop.ym / dataset.heightMeters) * 100)}%`,
+                  left: `${Math.min(76, projectFrac(selectedStop.xm, dataset.widthMeters, zoomScale) * 100)}%`,
+                  top: `${Math.min(78, projectFrac(selectedStop.ym, dataset.heightMeters, zoomScale) * 100)}%`,
                   transform: 'translate(-10px, -10px)',
                   background: 'rgba(8, 17, 30, 0.97)',
                   border: '1.5px solid #38bdf8',
@@ -1579,38 +2266,108 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
               </div>
             )}
 
+            {/* Control de zoom real (abajo a la izquierda): niveles REGIÓN/EVA/DRON + +/- */}
+            <div
+              style={{
+                position: 'absolute',
+                left: '14px',
+                bottom: '58px',
+                zIndex: 6,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: 'rgba(10, 18, 30, 0.85)',
+                  border: '1px solid rgba(148, 163, 184, 0.35)',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                }}
+              >
+                <button
+                  onClick={() => changeZoom(1)}
+                  disabled={currentSpanKm <= MIN_SPAN_KM}
+                  title="Acercar"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: '1px solid rgba(148, 163, 184, 0.25)',
+                    color: '#e2e8f0',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    cursor: currentSpanKm <= MIN_SPAN_KM ? 'default' : 'pointer',
+                    opacity: currentSpanKm <= MIN_SPAN_KM ? 0.35 : 1,
+                  }}
+                >
+                  +
+                </button>
+                <button
+                  onClick={() => changeZoom(-1)}
+                  disabled={currentSpanKm >= MAX_SPAN_KM}
+                  title="Alejar"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e2e8f0',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    cursor: currentSpanKm >= MAX_SPAN_KM ? 'default' : 'pointer',
+                    opacity: currentSpanKm >= MAX_SPAN_KM ? 0.35 : 1,
+                  }}
+                >
+                  −
+                </button>
+              </div>
+              {zoomTilesLoading && (
+                <span style={{ fontSize: '9px', color: '#7dd3fc' }}>Cargando tiles…</span>
+              )}
+              {!zoomTilesLoading && zoomTilesFailed && (
+                <span style={{ fontSize: '9px', color: '#fbbf24' }} title="Sin internet o Mars Trek no respondió: usando imagen de respaldo">
+                  Sin tiles reales (respaldo)
+                </span>
+              )}
+            </div>
+
             {/* Botón inferior izquierdo: Astronauta (abre/cierra Telemetría del traje EVA-01) */}
             <button
               onClick={() => setShowTelemetry(!showTelemetry)}
-              title="Telemetría del traje EVA-01"
+              title={showTelemetry ? 'Ocultar telemetría del traje' : 'Ver telemetría del traje EVA-01'}
               style={{
                 position: 'absolute',
                 left: '14px',
                 bottom: '14px',
                 width: '38px',
                 height: '38px',
-                borderRadius: '50%',
-                background: 'rgba(10, 22, 38, 0.88)',
-                border: `2px solid ${showTelemetry ? '#34d399' : '#38bdf8'}`,
+                borderRadius: '8px',
+                background: showTelemetry ? '#112238' : 'rgba(10, 20, 34, 0.92)',
+                border: `1px solid ${showTelemetry ? '#38bdf8' : '#233854'}`,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                boxShadow: '0 0 12px rgba(56, 189, 248, 0.35)',
+                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.55)',
                 zIndex: 5,
                 padding: 0,
+                transition: 'border-color 160ms ease, background-color 160ms ease',
               }}
             >
-              <AstronautIcon size={20} color="#f8fafc" />
+              <AstronautIcon size={19} color="#f1f5f9" />
               <span
                 style={{
                   position: 'absolute',
-                  right: '-2px',
-                  bottom: '-2px',
-                  width: '10px',
-                  height: '10px',
+                  right: '-3px',
+                  top: '-3px',
+                  width: '9px',
+                  height: '9px',
                   borderRadius: '50%',
-                  background: '#10b981',
+                  background: isO2Critical ? '#e5484d' : isO2Warn ? '#e5a024' : '#2fb380',
                   border: '1.5px solid #081322',
                 }}
               />
@@ -1668,177 +2425,286 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                     marginRight: '6px',
                   }}
                 />
-                <span style={{ fontSize: '9.5px', color: '#f1f5f9', fontWeight: 600 }}>100 km</span>
+                <span style={{ fontSize: '9.5px', color: '#f1f5f9', fontWeight: 600 }}>
+                  {currentSpanKm >= 1
+                    ? `${currentSpanKm.toFixed(currentSpanKm >= 10 ? 0 : 1)} km`
+                    : `${Math.round(currentSpanKm * 1000)} m`}
+                </span>
               </div>
               <div style={{ fontSize: '9.5px', color: '#cbd5e1', fontVariantNumeric: 'tabular-nums' }}>
                 Lat: {hoverCoords.lat} &nbsp;Lon: {hoverCoords.lon}
               </div>
             </div>
 
-            {/* Tarjeta flotante de Telemetría del traje EVA - 01 (diseño verde esmeralda del boceto) */}
+            {/* Módulo de soporte vital PLSS: Telemetría del traje EVA-01 (distribución asimétrica de 2 filas) */}
             {showTelemetry && (
-              <div
+              <section
+                aria-label="Telemetría del traje EVA-01"
                 style={{
                   position: 'absolute',
                   left: '14px',
                   bottom: '60px',
-                  width: '245px',
-                  background:
-                    'linear-gradient(180deg, rgba(11, 43, 41, 0.96) 0%, rgba(7, 25, 27, 0.98) 100%)',
-                  border: '1.5px solid #2dd4bf',
-                  borderRadius: '10px',
-                  padding: '12px 12px 14px 12px',
+                  width: '286px',
+                  background: 'rgba(13, 16, 23, 0.97)',
+                  border: '1px solid #1e2433',
+                  borderRadius: '8px',
+                  padding: '18px 18px 16px 18px',
                   color: '#f1f5f9',
                   zIndex: 6,
-                  boxShadow: '0 0 20px rgba(45, 212, 191, 0.25), 0 8px 24px rgba(0, 0, 0, 0.7)',
+                  boxShadow: '0 14px 34px rgba(0, 0, 0, 0.78)',
                 }}
               >
-                {/* Encabezado de la tarjeta de telemetría */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    marginBottom: '10px',
-                  }}
-                >
-                  <div style={{ lineHeight: 1.25 }}>
-                    <div style={{ fontSize: '12px', color: '#e2e8f0', fontWeight: 500 }}>
-                      Telemetría del traje
-                    </div>
-                    <div style={{ fontSize: '13px', color: '#ffffff', fontWeight: 700 }}>
-                      EVA - 01
-                    </div>
-                  </div>
-                  <StatusIconsCluster level={suitPressurePct} />
-                </div>
-
-                {/* Sub-caja 1: O2 en depósito */}
-                <div
-                  style={{
-                    background: 'rgba(45, 12, 18, 0.65)',
-                    border: `1px solid ${isO2Critical ? '#dc2626' : '#115e59'}`,
-                    borderRadius: '6px',
-                    padding: '6px 8px',
-                    marginBottom: '8px',
-                  }}
-                >
+                {/* Bloque superior: Oxígeno · O₂ a ancho completo */}
+                <div>
                   <div
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
-                      fontSize: '10.5px',
-                      marginBottom: '5px',
+                      alignItems: 'center',
                     }}
                   >
-                    <span style={{ color: '#f1f5f9', fontWeight: 600 }}>O2 en depósito</span>
-                    <strong style={{ color: isO2Critical ? '#f87171' : '#34d399' }}>
-                      {o2Level.toFixed(1)}%{isO2Critical ? ' - CRÍTICO!' : ''}
-                    </strong>
-                  </div>
-                  <div
-                    style={{
-                      background: 'rgba(127, 29, 29, 0.45)',
-                      borderRadius: '3px',
-                      height: '13px',
-                      overflow: 'hidden',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                    }}
-                  >
-                    <div
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                      {/* Icono de flujo de O2 */}
+                      <svg
+                        viewBox="0 0 16 14"
+                        width="15"
+                        height="13"
+                        fill="none"
+                        stroke="#7d899b"
+                        strokeWidth="1.35"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M1.5 4.2h9.2a1.8 1.8 0 1 0-1.8-1.8" />
+                        <path d="M1.5 7.2h11.5a1.8 1.8 0 1 1-1.8 1.8" />
+                        <path d="M1.5 10.2h6.8a1.6 1.6 0 1 1-1.6 1.6" />
+                      </svg>
+                      <span style={{ fontSize: '12.5px', color: '#8e9bae', fontWeight: 400 }}>
+                        Oxígeno · O₂
+                      </span>
+                    </div>
+
+                    <span
                       style={{
-                        width: `${Math.max(6, Math.min(100, o2Level))}%`,
-                        height: '100%',
-                        background: isO2Critical
-                          ? 'linear-gradient(90deg, #dc2626, #ef4444)'
-                          : 'linear-gradient(90deg, #10b981, #34d399)',
-                        boxShadow: isO2Critical ? '0 0 8px #ef4444' : 'none',
+                        fontFamily: MONO_READOUT_FONT,
+                        fontSize: '10px',
+                        fontWeight: 500,
+                        letterSpacing: '0.06em',
+                        color: isO2Critical ? '#ef4444' : isO2Warn ? '#f59e0b' : '#10b981',
                       }}
-                    />
-                  </div>
-                </div>
-
-                {/* Sub-caja 2: Pulso cardíaco */}
-                <div
-                  style={{
-                    background: 'rgba(6, 30, 31, 0.72)',
-                    border: '1px solid #0f766e',
-                    borderRadius: '6px',
-                    padding: '6px 8px',
-                    marginBottom: '8px',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '10.5px',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <span style={{ color: '#e2e8f0', fontWeight: 600 }}>Pulso cardíaco</span>
-                    <strong style={{ color: '#ffffff', fontSize: '11.5px' }}>{heartRate} BPM</strong>
-                  </div>
-                  <EcgBoxWave />
-                </div>
-
-                {/* Sub-caja 3: Presión del traje */}
-                <div
-                  style={{
-                    background: 'rgba(6, 30, 31, 0.72)',
-                    border: '1px solid #0f766e',
-                    borderRadius: '6px',
-                    padding: '6px 8px',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '10.5px',
-                      marginBottom: '5px',
-                    }}
-                  >
-                    <span style={{ color: '#e2e8f0', fontWeight: 600 }}>Presión del traje</span>
-                    <span style={{ color: '#cbd5e1', fontSize: '10px', fontWeight: 600 }}>
-                      <strong style={{ color: '#f8fafc' }}>{suitPressurePct.toFixed(1)}%</strong> | MIN 30!
+                    >
+                      {isO2Critical ? 'CRÍTICO' : isO2Warn ? 'ATENCIÓN' : 'NOMINAL'}
                     </span>
                   </div>
+
+                  {/* Lectura principal grande */}
                   <div
                     style={{
-                      background: 'rgba(15, 118, 110, 0.28)',
-                      borderRadius: '3px',
-                      height: '13px',
-                      overflow: 'hidden',
-                      border: '1px solid rgba(45, 212, 191, 0.25)',
+                      marginTop: '10px',
+                      marginBottom: '12px',
+                      display: 'flex',
+                      alignItems: 'baseline',
                     }}
                   >
-                    <div
+                    <span
                       style={{
-                        width: `${Math.max(8, Math.min(100, suitPressurePct))}%`,
-                        height: '100%',
-                        background: 'linear-gradient(90deg, #059669, #34d399)',
-                        boxShadow: '0 0 10px rgba(52, 211, 153, 0.5)',
+                        fontFamily: MONO_READOUT_FONT,
+                        fontVariantNumeric: 'tabular-nums slashed-zero',
+                        fontSize: '38px',
+                        fontWeight: 400,
+                        lineHeight: 1,
+                        letterSpacing: '-0.02em',
+                        color: isO2Critical ? '#f87171' : '#f1f5f9',
                       }}
-                    />
+                    >
+                      {o2Level.toFixed(1)}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: MONO_READOUT_FONT,
+                        fontSize: '15px',
+                        color: '#7d899b',
+                        marginLeft: '6px',
+                      }}
+                    >
+                      %
+                    </span>
+                  </div>
+
+                  {/* Barra lineal azul con muesca de umbral al 25 % */}
+                  <PlssLinearGauge
+                    valuePct={o2Level}
+                    minThresholdPct={25}
+                    fillColor={isO2Critical ? '#ef4444' : isO2Warn ? '#f59e0b' : '#29b6f6'}
+                  />
+
+                  {/* Escala inferior 0 — UMBRAL CRÍTICO 25% — 100 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginTop: '7px',
+                      fontFamily: MONO_READOUT_FONT,
+                      fontSize: '9.5px',
+                      color: '#5c6678',
+                      letterSpacing: '0.04em',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <span>0</span>
+                    <span>UMBRAL CRÍTICO 25%</span>
+                    <span>100</span>
                   </div>
                 </div>
 
-                {/* Pestaña luminosa inferior central del marco de telemetría (como en el boceto) */}
+                {/* Divisor horizontal */}
                 <div
                   style={{
-                    position: 'absolute',
-                    bottom: '-1px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: '54px',
-                    height: '4px',
-                    borderRadius: '3px 3px 0 0',
-                    background: '#34d399',
-                    boxShadow: '0 0 8px #34d399',
+                    height: '1px',
+                    background: '#1c2230',
+                    margin: '16px 0',
                   }}
                 />
-              </div>
+
+                {/* Bloque inferior: 2 columnas separadas por línea vertical */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1px 1fr',
+                    alignItems: 'stretch',
+                  }}
+                >
+                  {/* Columna izquierda: Pulso cardíaco */}
+                  <div style={{ paddingRight: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <svg
+                          viewBox="0 0 16 15"
+                          width="14"
+                          height="13"
+                          fill="none"
+                          stroke="#7d899b"
+                          strokeWidth="1.3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{
+                            transformOrigin: 'center',
+                            animation: `plssHeartPulse ${Number((60 / Math.max(40, Math.min(180, heartRate))).toFixed(2))}s ease-in-out infinite`,
+                          }}
+                        >
+                          <path d="M8 13.4S1.5 9.2 1.5 4.8A3.3 3.3 0 0 1 8 3.3a3.3 3.3 0 0 1 6.5 1.5C14.5 9.2 8 13.4 8 13.4Z" />
+                          <polyline points="4.2,7.2 6.3,7.2 7.3,5.2 8.6,9.2 9.6,7.2 11.8,7.2" strokeWidth="1.15" />
+                        </svg>
+                        <span style={{ fontSize: '12px', color: '#8e9bae', fontWeight: 400 }}>
+                          Pulso cardíaco
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          marginBottom: '12px',
+                          display: 'flex',
+                          alignItems: 'baseline',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontFamily: MONO_READOUT_FONT,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: '28px',
+                            fontWeight: 400,
+                            lineHeight: 1,
+                            color: isHrElevated ? '#fbbf24' : '#f1f5f9',
+                          }}
+                        >
+                          {Math.round(heartRate)}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: MONO_READOUT_FONT,
+                            fontSize: '11px',
+                            color: '#687588',
+                            marginLeft: '5px',
+                            letterSpacing: '0.03em',
+                          }}
+                        >
+                          BPM
+                        </span>
+                      </div>
+                    </div>
+
+                    <ClinicalEcgTrace isElevated={isHrElevated} bpm={heartRate} />
+                  </div>
+
+                  {/* Divisor vertical */}
+                  <div style={{ background: '#1c2230', width: '1px' }} />
+
+                  {/* Columna derecha: Presión del traje */}
+                  <div style={{ paddingLeft: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: '#8e9bae', fontWeight: 400 }}>
+                          Presión del traje
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: '10px',
+                          marginBottom: '14px',
+                          display: 'flex',
+                          alignItems: 'baseline',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontFamily: MONO_READOUT_FONT,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: '28px',
+                            fontWeight: 400,
+                            lineHeight: 1,
+                            color: suitPressurePct <= 30 ? '#f87171' : '#f1f5f9',
+                          }}
+                        >
+                          {suitPressurePct.toFixed(1)}
+                        </span>
+                        <span
+                          style={{
+                            fontFamily: MONO_READOUT_FONT,
+                            fontSize: '12.5px',
+                            color: '#687588',
+                            marginLeft: '4px',
+                          }}
+                        >
+                          %
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <PlssLinearGauge
+                        valuePct={suitPressurePct}
+                        minThresholdPct={30}
+                        fillColor={suitPressurePct <= 30 ? '#ef4444' : '#9aa6b8'}
+                      />
+                      <div
+                        style={{
+                          marginTop: '7px',
+                          fontFamily: MONO_READOUT_FONT,
+                          fontSize: '9.5px',
+                          color: '#5c6678',
+                          letterSpacing: '0.04em',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        MIN SEGURO 30%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
             )}
           </div>
 
@@ -1893,60 +2759,145 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
           }}
         >
           <div>
-            {/* Banner Amarillo Superior sin márgenes, idéntico al boceto */}
+            {/* Encabezado estructural del panel de Obstáculos y pendientes */}
             <div
               style={{
-                background: '#ffd000',
-                color: '#0f172a',
-                fontWeight: 700,
-                fontSize: '15px',
-                padding: '13px 16px',
-                letterSpacing: '0.2px',
+                background: '#0b1829',
+                borderBottom: '1px solid #182940',
+                padding: '11px 14px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
               }}
             >
-              Obstáculos &amp; Pendientes
+              <span
+                style={{
+                  color: '#f1f5f9',
+                  fontWeight: 600,
+                  fontSize: '13.5px',
+                  lineHeight: 1.2,
+                }}
+              >
+                Obstáculos y pendientes
+              </span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  color: '#8a9bb2',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {droneData?.obstacles?.length
+                  ? `${droneData.obstacles.length} detectados`
+                  : ' Evaluación activa'}
+              </span>
             </div>
 
-            {/* Tarjetas de Riesgo (Alto, Medio, Bajo) */}
-            <div style={{ padding: '10px 10px 6px 10px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+            {/* Lista estructurada de condiciones del terreno (sin ondas decorativas ni lavados de gradiente) */}
+            <div style={{ padding: '10px 12px 6px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {riskCards.map((c, i) => (
                 <div
                   key={i}
                   style={{
-                    background: c.bg,
-                    border: `1.5px solid ${c.border}`,
-                    borderRadius: '8px',
-                    padding: '9px 11px 2px 11px',
-                    boxShadow: 'inset 0 0 14px rgba(0,0,0,0.35)',
-                    overflow: 'hidden',
+                    position: 'relative',
+                    background: '#0b1626',
+                    border: '1px solid #182940',
+                    borderLeft: `3px solid ${c.accent}`,
+                    borderRadius: '5px',
+                    padding: '9px 11px 9px 12px',
                   }}
                 >
+                  {/* Fila 1: Título específico del hallazgo + lectura numérica tabular */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      gap: '8px',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: '#f1f5f9',
+                        fontSize: '12.5px',
+                        fontWeight: 600,
+                        lineHeight: 1.25,
+                      }}
+                    >
+                      {c.title}
+                    </span>
+                    <span
+                      style={{
+                        color: c.level === 'red' ? '#f87171' : c.level === 'yellow' ? '#fbbf24' : '#f1f5f9',
+                        fontSize: '14.5px',
+                        fontWeight: 600,
+                        fontVariantNumeric: 'tabular-nums',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {c.metric}
+                    </span>
+                  </div>
+
+                  {/* Fila 2: Etiqueta de severidad + referencia de umbral/fuente */}
                   <div
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      marginBottom: '4px',
-                      fontSize: '11.5px',
+                      gap: '6px',
+                      marginBottom: '6px',
                     }}
                   >
-                    <span style={{ color: '#cbd5e1', fontWeight: 500 }}>
-                      Riesgo detectado:{' '}
-                      <strong style={{ color: c.badgeColor, fontWeight: 700 }}>{c.badge}</strong>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: '1.5px 6px',
+                        borderRadius: '3px',
+                        background: c.badgeBg,
+                        border: `1px solid ${c.badgeBorder}`,
+                        color: c.badgeText,
+                        fontSize: '10.5px',
+                        fontWeight: 500,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: '5px',
+                          height: '5px',
+                          borderRadius: '50%',
+                          background: c.accent,
+                        }}
+                      />
+                      {c.severityLabel}
                     </span>
-                    <CardHeaderIcon level={c.level} />
+                    <span
+                      style={{
+                        fontSize: '10.5px',
+                        color: '#8a9bb2',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {c.meta}
+                    </span>
                   </div>
+
+                  {/* Fila 3: Acción recomendada en voz activa */}
                   <div
                     style={{
-                      color: '#f8fafc',
-                      fontSize: '12.5px',
-                      lineHeight: 1.28,
-                      fontWeight: 500,
+                      color: '#cbd5e1',
+                      fontSize: '11.5px',
+                      lineHeight: 1.35,
+                      paddingTop: '5px',
+                      borderTop: '1px solid #132236',
                     }}
                   >
-                    {c.text}
+                    {c.action}
                   </div>
-                  <CardWaveArt level={c.level} />
                 </div>
               ))}
             </div>

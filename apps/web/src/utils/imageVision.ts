@@ -763,6 +763,78 @@ export function fuseVisionWithD415Data(
     }
   }
 
+  // Topografía real del D415 (si el backend la manda): camera_height_grid_60x80 y
+  // camera_slope_grid_60x80 cubren el mismo parche local que occupancy_grid (width_m x
+  // height_m alrededor de la cámara), a 60x80 celdas en vez de 120x80. Donde exista,
+  // reemplaza la adivinanza por brillo de píxeles con la medición real.
+  if (activeMapState) {
+    const widthM = activeMapState.width_m ?? 4.0;
+    const heightM = activeMapState.height_m ?? 6.0;
+    const originX = activeMapState.origin_x_m ?? -2.0;
+    const originY = activeMapState.origin_y_m ?? 0.0;
+
+    const cellToGrid = (r: number, c: number, rows: number, cols: number): [number, number] => {
+      const x_m = originX + c * (widthM / cols);
+      const y_m = originY + r * (heightM / rows);
+      const [mapX, mapY] = d415MetersToMapMeters(x_m, y_m);
+      const gc = Math.min(gridCols, Math.max(0, Math.round((mapX / 10) * gridCols)));
+      const gr = Math.min(gridRows, Math.max(0, Math.round((mapY / 10) * gridRows)));
+      return [gr, gc];
+    };
+
+    const heightGridReal = activeMapState.camera_height_grid_60x80;
+    if (heightGridReal && heightGridReal.length > 0 && heightGridReal[0]?.length > 0) {
+      const rows = heightGridReal.length;
+      const cols = heightGridReal[0].length;
+
+      // El D415 reporta metros relativos a la cámara (p.ej. -3.3..0), muy distinto a la
+      // escala del terreno sintético (altura local normalizada 19..40m). Para no pintar
+      // un escalón falso en el borde del parche, se ancla el relieve real al valor que
+      // ya tenía la celda central antes de escribir encima: se conserva la forma real
+      // medida, sólo se corrige el punto de referencia (datum), no el dato en sí.
+      const centerR = Math.floor(rows / 2);
+      const centerC = Math.floor(cols / 2);
+      const [refGr, refGc] = cellToGrid(centerR, centerC, rows, cols);
+      const heightOffset = elevationGrid[refGr][refGc] - heightGridReal[centerR][centerC];
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const [gr, gc] = cellToGrid(r, c, rows, cols);
+          elevationGrid[gr][gc] = Number((heightGridReal[r][c] + heightOffset).toFixed(2));
+        }
+      }
+    }
+
+    const slopeGridReal = activeMapState.camera_slope_grid_60x80;
+    if (slopeGridReal && slopeGridReal.length > 0 && slopeGridReal[0]?.length > 0) {
+      const rows = slopeGridReal.length;
+      const cols = slopeGridReal[0].length;
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const realSlopeDeg = slopeGridReal[r][c];
+          const [gr, gc] = cellToGrid(r, c, rows, cols);
+
+          // La pendiente real ya viene en grados, igual que slopeGrid: reemplaza
+          // directamente la estimación por brillo en esta celda.
+          slopeGrid[gr][gc] = realSlopeDeg;
+
+          // Mismos umbrales que ya usa el bloque de occupancy_grid de arriba, para que
+          // el costo de A* y el margen de seguridad reaccionen igual ante una pendiente
+          // real peligrosa que ante un obstáculo detectado por el D415.
+          if (realSlopeDeg >= 30) {
+            costGrid[gr][gc] = Math.max(costGrid[gr][gc], 170);
+            ai4marsGrid[gr][gc] = 3;
+            safetyBufferGrid[gr][gc] = 1.0;
+          } else if (realSlopeDeg >= 18) {
+            costGrid[gr][gc] = Math.max(costGrid[gr][gc], 85);
+            safetyBufferGrid[gr][gc] = Math.max(safetyBufferGrid[gr][gc], 0.55);
+          }
+        }
+      }
+    }
+  }
+
   const realObstacles = droneData?.obstacles ?? dataset.obstacles ?? [];
   realObstacles.forEach((obs, idx) => {
     let ox = obs.x;

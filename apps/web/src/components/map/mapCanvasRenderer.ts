@@ -3,6 +3,7 @@ import { MartianTerrainDataset } from '../../config/connectionModes';
 import { d415MetersToMapMeters, ImageVisionAnalysis } from '../../utils/imageVision';
 import { SafeRouteResult } from '../../utils/pathfinderAStar';
 import { ScientificStop } from '../../data/stops';
+import { projectFrac } from '../../utils/marsTiles';
 
 export type MapLayerMode =
   | 'fusion_mars_d415'
@@ -32,6 +33,12 @@ export interface MapCanvasRenderParams {
   dronePadPos: [number, number];
   evaPos: [number, number];
   stops?: ScientificStop[];
+  // Zoom libre (tipo Google Maps, sin pan): zoomScale aleja del centro del canvas
+  // a los marcadores/obstáculos/ruta según el zoom actual (1 = sin zoom, como antes
+  // de tener esta función). bgCropFraction recorta la imagen de fondo ya cargada
+  // para que se vea exactamente ese mismo zoom mientras llega un tile más detallado.
+  zoomScale: number;
+  bgCropFraction: number;
 }
 
 function drawHeadingTape(ctx: CanvasRenderingContext2D, width: number): void {
@@ -150,12 +157,18 @@ function drawCompassRose(ctx: CanvasRenderingContext2D, width: number): void {
   ctx.restore();
 }
 
-function drawRegionLabels(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+function drawRegionLabels(
+  ctx: CanvasRenderingContext2D,
+  projX: (xm: number) => number,
+  projY: (ym: number) => number
+): void {
+  // Posiciones en el mismo espacio sintético 0..10 que todo lo demás (no fracciones
+  // fijas del canvas), para que se muevan con el zoom igual que el resto del mapa.
   const labels = [
-    { text: 'Dollfus', x: width * 0.21, y: height * 0.55 },
-    { text: "Ma'adim Vallis", x: width * 0.55, y: height * 0.41 },
-    { text: 'Nervoorn', x: width * 0.43, y: height * 0.69 },
-    { text: 'Bachtiaus Vallis', x: width * 0.28, y: height * 0.74 },
+    { text: 'Dollfus', x: projX(2.1), y: projY(5.5) },
+    { text: "Ma'adim Vallis", x: projX(5.5), y: projY(4.1) },
+    { text: 'Nervoorn', x: projX(4.3), y: projY(6.9) },
+    { text: 'Bachtiaus Vallis', x: projX(2.8), y: projY(7.4) },
   ];
 
   ctx.save();
@@ -189,15 +202,34 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     targetPoint,
     evaPos,
     stops,
+    zoomScale,
+    bgCropFraction,
   } = params;
 
-  // 1. Dibujar el fondo activo
+  // Reproyecta un punto del espacio sintético 0..dataset.widthMeters/heightMeters
+  // hacia el canvas, alejándolo del centro según el zoom actual (sin pan: el centro
+  // de la vista es siempre el centro del canvas). A zoomScale=1 es idéntico a la
+  // fórmula de siempre (v/ancho)*width.
+  const projX = (xm: number) => projectFrac(xm, dataset.widthMeters, zoomScale) * width;
+  const projY = (ym: number) => projectFrac(ym, dataset.heightMeters, zoomScale) * height;
+  const projRx = (vm: number) => (vm / dataset.widthMeters) * width * zoomScale;
+  const projRy = (vm: number) => (vm / dataset.heightMeters) * height * zoomScale;
+
+  // 1. Dibujar el fondo activo (recortado al zoom actual: bgCropFraction<1 ⇒ zoom
+  // más cercano que el escalón de detalle ya cargado, igual que sobre-acercar un
+  // tile real).
   ctx.clearRect(0, 0, width, height);
   if (mapLayerMode === 'pure_d415_grid') {
     ctx.fillStyle = '#090d16';
     ctx.fillRect(0, 0, width, height);
   } else if (loadedImg) {
-    ctx.drawImage(loadedImg, 0, 0, width, height);
+    const iw = loadedImg.naturalWidth || loadedImg.width;
+    const ih = loadedImg.naturalHeight || loadedImg.height;
+    const cropW = iw * bgCropFraction;
+    const cropH = ih * bgCropFraction;
+    const sx = (iw - cropW) / 2;
+    const sy = (ih - cropH) / 2;
+    ctx.drawImage(loadedImg, sx, sy, cropW, cropH, 0, 0, width, height);
     ctx.fillStyle = visionData.isLineMap
       ? 'rgba(15, 23, 42, 0.08)'
       : 'rgba(8, 12, 22, 0.14)';
@@ -213,8 +245,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     const rows = occ.length;
     const cols = occ[0]?.length ?? 80;
     const step = mapLayerMode === 'pure_d415_grid' ? 1 : 2;
-    const blockW = Math.max(3, ((0.05 * 1.45 * step) / dataset.widthMeters) * width + 1);
-    const blockH = Math.max(3, ((0.05 * 1.45 * step) / dataset.heightMeters) * height + 1);
+    const blockW = Math.max(3, projRx(0.05 * 1.45 * step) + 1);
+    const blockH = Math.max(3, projRy(0.05 * 1.45 * step) + 1);
 
     ctx.save();
     for (let r = 0; r < rows; r += step) {
@@ -225,8 +257,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
         const x_m = -2.0 + c * 0.05;
         const y_m = r * 0.05;
         const [mapX, mapY] = d415MetersToMapMeters(x_m, y_m);
-        const px = (mapX / dataset.widthMeters) * width;
-        const py = (mapY / dataset.heightMeters) * height;
+        const px = projX(mapX);
+        const py = projY(mapY);
 
         if (val === 0) {
           ctx.fillStyle = 'rgba(34, 197, 94, 0.09)';
@@ -363,9 +395,13 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
   }
 
   // 4. Gran círculo morado de escaneo en el centro del mapa + pin morado central
-  const scanCenterX = width * 0.42;
-  const scanCenterY = height * 0.49;
-  const scanRadiusPx = Math.min(width, height) * 0.34;
+  // Posición en el espacio sintético 0..10 (no una fracción fija del canvas), para
+  // que se mueva con el zoom igual que EVA-01/Destino/obstáculos en vez de quedarse
+  // pegada a la pantalla. El radio escala de forma uniforme (sin deformarse a elipse)
+  // para que siga viéndose como un círculo.
+  const scanCenterX = projX(4.2);
+  const scanCenterY = projY(4.9);
+  const scanRadiusPx = Math.min(width, height) * 0.34 * zoomScale;
 
   ctx.save();
   ctx.beginPath();
@@ -410,8 +446,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
         if (mask.polygon.length < 3) return;
         ctx.beginPath();
         mask.polygon.forEach(([mx, my], idx) => {
-          const px = (mx / dataset.widthMeters) * width;
-          const py = (my / dataset.heightMeters) * height;
+          const px = projX(mx);
+          const py = projY(my);
           if (idx === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         });
@@ -427,12 +463,13 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
 
     visionData.detectedObstacles.forEach((obs) => {
       if (obs.detector !== 'HoughCircles') return;
-      const cx = (obs.x / dataset.widthMeters) * width;
-      const cy = (obs.y / dataset.heightMeters) * height;
+      const cx = projX(obs.x);
+      const cy = projY(obs.y);
       // Elipse en coordenadas de canvas: así el contorno coincide con el cráter
-      // aunque el canvas no tenga la misma proporción que la imagen.
-      const rx = (obs.radius / dataset.widthMeters) * width;
-      const ry = ((obs.radiusY ?? obs.radius) / dataset.heightMeters) * height;
+      // aunque el canvas no tenga la misma proporción que la imagen. El radio
+      // también escala con el zoom, igual que la posición.
+      const rx = projRx(obs.radius);
+      const ry = projRy(obs.radiusY ?? obs.radius);
 
       if (showContours) {
         const k = (obs.safetyRadius ?? obs.radius * 1.5) / obs.radius;
@@ -462,8 +499,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
         if (seg.points.length < 2) return;
         ctx.beginPath();
         seg.points.forEach(([sx, sy], idx) => {
-          const px = (sx / dataset.widthMeters) * width;
-          const py = (sy / dataset.heightMeters) * height;
+          const px = projX(sx);
+          const py = projY(sy);
           if (idx === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         });
@@ -474,29 +511,10 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     ctx.restore();
   }
 
-  // 6. Zona roja principal de riesgo junto a Ma'adim Vallis
   const endPt = safeRoute.points[safeRoute.points.length - 1] ?? targetPoint;
-  const hazardPx = width * 0.51;
-  const hazardPy = height * 0.36;
-  const hazardR = Math.min(width, height) * 0.068;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(hazardPx, hazardPy, hazardR, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(220, 38, 38, 0.36)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(248, 113, 113, 0.72)';
-  ctx.lineWidth = 1.4;
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(hazardPx, hazardPy, hazardR * 0.42, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(239, 68, 68, 0.48)';
-  ctx.fill();
-  ctx.restore();
 
   // 7. Nombres geográficos del mapa marciano
-  drawRegionLabels(ctx, width, height);
+  drawRegionLabels(ctx, projX, projY);
 
   // 8. Ruta Segura con A* + Corredor de Margen de Seguridad Generoso
   if (safeRoute.points.length > 1) {
@@ -505,8 +523,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     // Banda translúcida que representa el margen de seguridad generoso a lo largo de la ruta A*
     ctx.beginPath();
     safeRoute.points.forEach(([rx, ry], idx) => {
-      const px = (rx / dataset.widthMeters) * width;
-      const py = (ry / dataset.heightMeters) * height;
+      const px = projX(rx);
+      const py = projY(ry);
       if (idx === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     });
@@ -520,8 +538,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     // Sombra de contraste de la línea central A*
     ctx.beginPath();
     safeRoute.points.forEach(([rx, ry], idx) => {
-      const px = (rx / dataset.widthMeters) * width;
-      const py = (ry / dataset.heightMeters) * height;
+      const px = projX(rx);
+      const py = projY(ry);
       if (idx === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     });
@@ -533,8 +551,8 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     // Trazo verde punteado de la Ruta A*
     ctx.beginPath();
     safeRoute.points.forEach(([rx, ry], idx) => {
-      const px = (rx / dataset.widthMeters) * width;
-      const py = (ry / dataset.heightMeters) * height;
+      const px = projX(rx);
+      const py = projY(ry);
       if (idx === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     });
@@ -545,61 +563,118 @@ export function renderTopographicMapCanvas(params: MapCanvasRenderParams): void 
     ctx.restore();
   }
 
-  // 9. Marcador EVA_01
+  // 9. Marcador EVA_01 (baliza táctica con 4 muescas cardinales y núcleo activo)
   const startPt = safeRoute.points[0] ?? evaPos;
-  const evaPx = (startPt[0] / dataset.widthMeters) * width;
-  const evaPy = (startPt[1] / dataset.heightMeters) * height;
+  const evaPx = projX(startPt[0]);
+  const evaPy = projY(startPt[1]);
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(evaPx, evaPy, 7, 0, Math.PI * 2);
+  ctx.arc(evaPx, evaPy, 10.5, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.38)';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+
+  const evaTicks: Array<[number, number, number, number]> = [
+    [evaPx, evaPy - 12.5, evaPx, evaPy - 9],
+    [evaPx, evaPy + 9, evaPx, evaPy + 12.5],
+    [evaPx - 12.5, evaPy, evaPx - 9, evaPy],
+    [evaPx + 9, evaPy, evaPx + 12.5, evaPy],
+  ];
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 1.5;
+  evaTicks.forEach(([x1, y1, x2, y2]) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  });
+
+  ctx.beginPath();
+  ctx.arc(evaPx, evaPy, 6.2, 0, Math.PI * 2);
   ctx.fillStyle = '#0b192c';
   ctx.fill();
-  ctx.lineWidth = 2.8;
+  ctx.lineWidth = 2.2;
   ctx.strokeStyle = '#38bdf8';
   ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(evaPx, evaPy, 2.4, 0, Math.PI * 2);
+  ctx.fillStyle = '#38bdf8';
+  ctx.fill();
 
   ctx.font = 'bold 13px "Inter", "Segoe UI", sans-serif';
   ctx.fillStyle = '#f8fafc';
   ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
   ctx.shadowBlur = 5;
   ctx.textBaseline = 'middle';
-  ctx.fillText('EVA_01', evaPx + 11, evaPy + 1);
+  ctx.fillText('EVA-01', evaPx + 15, evaPy + 1);
   ctx.restore();
 
-  // 10. Marcador Destino
-  const targetPx = (endPt[0] / dataset.widthMeters) * width;
-  const targetPy = (endPt[1] / dataset.heightMeters) * height;
+  // 10. Marcador Destino (retícula romboidal con mira central)
+  const targetPx = projX(endPt[0]);
+  const targetPy = projY(endPt[1]);
+  const diamondR = 9.5;
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(targetPx, targetPy, 7, 0, Math.PI * 2);
-  ctx.fillStyle = '#1c1917';
+  ctx.moveTo(targetPx, targetPy - diamondR);
+  ctx.lineTo(targetPx + diamondR, targetPy);
+  ctx.lineTo(targetPx, targetPy + diamondR);
+  ctx.lineTo(targetPx - diamondR, targetPy);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(28, 25, 23, 0.85)';
   ctx.fill();
-  ctx.lineWidth = 2.8;
+  ctx.lineWidth = 2.0;
   ctx.strokeStyle = '#f59e0b';
   ctx.stroke();
+
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(targetPx, targetPy - 5.2);
+  ctx.lineTo(targetPx, targetPy - 2.8);
+  ctx.moveTo(targetPx, targetPy + 2.8);
+  ctx.lineTo(targetPx, targetPy + 5.2);
+  ctx.moveTo(targetPx - 5.2, targetPy);
+  ctx.lineTo(targetPx - 2.8, targetPy);
+  ctx.moveTo(targetPx + 2.8, targetPy);
+  ctx.lineTo(targetPx + 5.2, targetPy);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(targetPx, targetPy, 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = '#fbbf24';
+  ctx.fill();
 
   ctx.font = 'bold 13px "Inter", "Segoe UI", sans-serif';
   ctx.fillStyle = '#fbbf24';
   ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
   ctx.shadowBlur = 5;
   ctx.textBaseline = 'middle';
-  ctx.fillText('Destino', targetPx + 11, targetPy + 1);
+  ctx.fillText('Destino', targetPx + 13, targetPy + 1);
   ctx.restore();
 
-  // 10.5 Paradas científicas (agregadas por el usuario con clic derecho)
+  // 10.5 Paradas científicas (estación hexagonal con índice tabular)
   if (stops && stops.length > 0) {
     for (const stop of stops) {
-      const px = (stop.xm / dataset.widthMeters) * width;
-      const py = (stop.ym / dataset.heightMeters) * height;
+      const px = projX(stop.xm);
+      const py = projY(stop.ym);
+      const hexR = 9.2;
 
       ctx.save();
       ctx.beginPath();
-      ctx.arc(px, py, 8, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(8, 23, 38, 0.92)';
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 2;
+        const hx = px + Math.cos(angle) * hexR;
+        const hy = py + Math.sin(angle) * hexR;
+        if (i === 0) ctx.moveTo(hx, hy);
+        else ctx.lineTo(hx, hy);
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(11, 27, 46, 0.94)';
       ctx.fill();
-      ctx.lineWidth = 2.2;
+      ctx.lineWidth = 2.0;
       ctx.strokeStyle = '#38bdf8';
       ctx.stroke();
 

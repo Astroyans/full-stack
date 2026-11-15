@@ -69,11 +69,10 @@ export default function App() {
   return (
     <div
       style={{
-        padding: '18px 20px',
+        minHeight: '100vh',
+        background: '#080a0f',
         fontFamily: '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif',
         color: '#f3f4f6',
-        maxWidth: '1360px',
-        margin: '0 auto',
       }}
     >
       <TopographicMap2D
