@@ -120,89 +120,7 @@ const HeadingTapeOverlay: React.FC = () => {
   );
 };
 
-const CompassRoseOverlay: React.FC = () => (
-  <View
-    pointerEvents="none"
-    style={{
-      position: 'absolute',
-      top: 14,
-      right: 14,
-      width: 52,
-      height: 52,
-      borderRadius: 26,
-      backgroundColor: 'rgba(10, 20, 35, 0.72)',
-      borderWidth: 1.2,
-      borderColor: 'rgba(148, 163, 184, 0.55)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 6,
-    }}
-  >
-    <View
-      style={{
-        position: 'absolute',
-        width: 36,
-        height: 1,
-        backgroundColor: 'rgba(148, 163, 184, 0.25)',
-      }}
-    />
-    <View
-      style={{
-        position: 'absolute',
-        width: 1,
-        height: 36,
-        backgroundColor: 'rgba(148, 163, 184, 0.25)',
-      }}
-    />
-    <Text style={{ position: 'absolute', top: 3, fontSize: 8.5, fontWeight: 'bold', color: '#f8fafc' }}>
-      N
-    </Text>
-    <Text style={{ position: 'absolute', bottom: 3, fontSize: 8.5, fontWeight: 'bold', color: '#f8fafc' }}>
-      S
-    </Text>
-    <Text style={{ position: 'absolute', left: 4, fontSize: 8.5, fontWeight: 'bold', color: '#f8fafc' }}>
-      W
-    </Text>
-    <Text style={{ position: 'absolute', right: 4, fontSize: 8.5, fontWeight: 'bold', color: '#f8fafc' }}>
-      E
-    </Text>
-    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: 3.5,
-          borderRightWidth: 3.5,
-          borderBottomWidth: 11,
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderBottomColor: '#ef4444',
-        }}
-      />
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: 3.5,
-          borderRightWidth: 3.5,
-          borderTopWidth: 11,
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderTopColor: '#38bdf8',
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          width: 3.5,
-          height: 3.5,
-          borderRadius: 2,
-          backgroundColor: '#e2e8f0',
-        }}
-      />
-    </View>
-  </View>
-);
+
 
 const ClinicalEcgTraceIpad: React.FC<{ isElevated?: boolean; bpm?: number }> = ({
   isElevated = false,
@@ -497,6 +415,7 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
   const [showLayersPanel, setShowLayersPanel] = useState(false);
+  const [showStopsPanel, setShowStopsPanel] = useState(false);
 
   // Capas del mapa
   const [showCraters, setShowCraters] = useState(true);
@@ -519,6 +438,26 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
     lat: '-11.53010',
     lon: '6.23993°',
   });
+
+  const addStopAtCurrentTarget = () => {
+    if (stops.length >= 4) return;
+    const number = stops.length + 1;
+    const objectives = [
+      'Muestreo de regolito marciano',
+      'Análisis espectral de basalto',
+      'Búsqueda de minerales hidratados',
+      'Extracción de testigos de roca profunda',
+    ];
+    const newStop: ScientificStop = {
+      id: `stop-${Date.now()}`,
+      number,
+      name: `Parada ${number}`,
+      objective: objectives[number - 1] ?? 'Muestreo geológico',
+      xm: targetPoint[0],
+      ym: targetPoint[1],
+    };
+    setStops([...stops, newStop]);
+  };
 
   const evaYaw = evaData?.imu?.yaw ?? 0;
   const evaPos: [number, number] = [
@@ -587,8 +526,12 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
 
   const handleMapPress = (e: GestureResponderEvent) => {
     const { locationX, locationY } = e.nativeEvent;
-    const relX = Math.max(0.04, Math.min(0.96, locationX / mapSize.width));
-    const relY = Math.max(0.05, Math.min(0.95, locationY / mapSize.height));
+    const normX = locationX / mapSize.width;
+    const normY = locationY / mapSize.height;
+    const unscaledX = 0.5 + (normX - 0.5) / zoomScale;
+    const unscaledY = 0.5 + (normY - 0.5) / zoomScale;
+    const relX = Math.max(0.04, Math.min(0.96, unscaledX));
+    const relY = Math.max(0.05, Math.min(0.95, unscaledY));
     const xm = Number((relX * 10).toFixed(2));
     const ym = Number((relY * 10).toFixed(2));
     setTargetPoint([xm, ym]);
@@ -600,8 +543,12 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
 
   const handleMapLongPress = (e: GestureResponderEvent) => {
     const { locationX, locationY } = e.nativeEvent;
-    const relX = Math.max(0.04, Math.min(0.96, locationX / mapSize.width));
-    const relY = Math.max(0.05, Math.min(0.95, locationY / mapSize.height));
+    const normX = locationX / mapSize.width;
+    const normY = locationY / mapSize.height;
+    const unscaledX = 0.5 + (normX - 0.5) / zoomScale;
+    const unscaledY = 0.5 + (normY - 0.5) / zoomScale;
+    const relX = Math.max(0.04, Math.min(0.96, unscaledX));
+    const relY = Math.max(0.05, Math.min(0.95, unscaledY));
     const xm = Number((relX * 10).toFixed(2));
     const ym = Number((relY * 10).toFixed(2));
     setPendingStopPos([xm, ym]);
@@ -895,161 +842,16 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
               onLongPress={handleMapLongPress}
               style={styles.mapPressable}
             >
-              <Image source={MARS_IMG} style={styles.mapBackgroundImage} resizeMode="stretch" />
-              <View style={styles.mapTintOverlay} />
-
-              {/* Botón superior izquierdo: LEYENDA */}
-              <TouchableOpacity
-                onPress={() => setShowLegend(!showLegend)}
-                style={styles.legendBtn}
+              {/* PLANO DEL TERRENO ESCALADO POR EL ZOOM TÁCTICO */}
+              <View
+                style={{
+                  width: mapSize.width,
+                  height: mapSize.height,
+                  transform: [{ scale: zoomScale }],
+                }}
               >
-                <Text style={styles.legendBtnText}>LEYENDA {showLegend ? '▲' : '▼'}</Text>
-              </TouchableOpacity>
-
-              {/* Panel de Leyenda Plegable */}
-              {showLegend && (
-                <View style={styles.legendPanel}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#38bdf8', marginBottom: 6 }}>
-                    LEYENDA DEL MAPA
-                  </Text>
-                  {[
-                    { label: 'Base de operaciones', desc: 'Punto de partida', color: '#38bdf8' },
-                    { label: 'Rover / D415', desc: 'Plataforma sensorizada', color: '#f59e0b' },
-                    { label: 'Astronauta EVA-01', desc: 'Posición actual en tiempo real', color: '#38bdf8' },
-                    { label: 'Objetivo de navegación', desc: 'Destino fijado', color: '#f59e0b' },
-                    { label: 'Parada científica', desc: 'Puntos de muestreo', color: '#38bdf8' },
-                    { label: 'Obstáculo o cráter', desc: 'Depresión o terreno de riesgo', color: '#ef4444' },
-                  ].map((item, idx) => (
-                    <View
-                      key={idx}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                        marginBottom: 4,
-                      }}
-                    >
-                      <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: item.color,
-                        }}
-                      />
-                      <View>
-                        <Text style={{ fontSize: 9.5, color: '#f1f5f9', fontWeight: '600' }}>
-                          {item.label}
-                        </Text>
-                        <Text style={{ fontSize: 8, color: '#94a3b8' }}>{item.desc}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Botón superior derecho: CAPAS DEL MAPA */}
-              <TouchableOpacity
-                onPress={() => setShowLayersPanel(!showLayersPanel)}
-                style={styles.layersBtn}
-              >
-                <Text style={styles.layersBtnText}>CAPAS DEL MAPA {showLayersPanel ? '▲' : '▼'}</Text>
-              </TouchableOpacity>
-
-              {/* Panel de Capas Desplegable */}
-              {showLayersPanel && (
-                <View style={styles.layersPanel}>
-                  {[
-                    {
-                      label: 'Cráteres detectados',
-                      checked: showCraters,
-                      onChange: () => setShowCraters(!showCraters),
-                      count: obstacles.filter((o) => o.detector === 'HoughCircles').length,
-                    },
-                    {
-                      label: 'Escarpes geológicos',
-                      checked: showEscarpments,
-                      onChange: () => setShowEscarpments(!showEscarpments),
-                      count: DEFAULT_MARS_ESCARPMENTS.length,
-                    },
-                    {
-                      label: 'Curvas de nivel',
-                      checked: showContourLines,
-                      onChange: () => setShowContourLines(!showContourLines),
-                    },
-                    {
-                      label: 'Cuadrícula métrica',
-                      checked: showMetricGrid,
-                      onChange: () => setShowMetricGrid(!showMetricGrid),
-                    },
-                  ].map((row, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      onPress={row.onChange}
-                      style={{
-                        flexDirection: 'row',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                        <View
-                          style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: 3,
-                            borderWidth: 1,
-                            borderColor: row.checked ? '#38bdf8' : '#475569',
-                            backgroundColor: row.checked ? '#38bdf8' : 'transparent',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {row.checked && (
-                            <View
-                              style={{
-                                width: 6,
-                                height: 6,
-                                backgroundColor: '#080a0f',
-                                borderRadius: 1,
-                              }}
-                            />
-                          )}
-                        </View>
-                        <Text style={{ fontSize: 10.5, color: '#e2e8f0' }}>{row.label}</Text>
-                      </View>
-                      {row.count !== undefined && (
-                        <Text style={{ fontSize: 9.5, color: '#64748b', fontFamily: 'monospace' }}>
-                          {String(row.count).padStart(2, '0')}
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {/* Controles de Zoom verticales derechos */}
-              <View style={styles.zoomControlsBox}>
-                <TouchableOpacity
-                  onPress={() => setZoomScale(Math.min(2.5, zoomScale + 0.25))}
-                  style={styles.zoomBtn}
-                >
-                  <Text style={styles.zoomBtnText}>+</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setZoomScale(Math.max(0.75, zoomScale - 0.25))}
-                  style={styles.zoomBtn}
-                >
-                  <Text style={styles.zoomBtnText}>−</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setZoomScale(1.0)} style={styles.zoomBtn}>
-                  <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>⊙</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Cinta superior y brújula */}
-              <HeadingTapeOverlay />
-              <CompassRoseOverlay />
+                <Image source={MARS_IMG} style={styles.mapBackgroundImage} resizeMode="stretch" />
+                <View style={styles.mapTintOverlay} />
 
               {/* Círculo morado central de escaneo */}
               <View
@@ -1376,7 +1178,291 @@ export const TopographicMapIpad: React.FC<TopographicMapIpadProps> = ({
               >
                 Destino
               </Text>
-            </Pressable>
+            </View>
+          </Pressable>
+
+          {/* ELEMENTOS FIJOS DEL HUD (NO ESCALAN CON EL ZOOM) */}
+          {/* Cinta superior de rumbo fija */}
+          <HeadingTapeOverlay />
+
+          {/* Botón superior izquierdo: LEYENDA */}
+          <TouchableOpacity
+            onPress={() => {
+              setShowLegend(!showLegend);
+              setShowLayersPanel(false);
+              setShowStopsPanel(false);
+            }}
+            style={styles.legendBtn}
+          >
+            <Text style={styles.legendBtnText}>LEYENDA {showLegend ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+
+          {/* Panel de Leyenda Plegable */}
+          {showLegend && (
+            <View style={styles.legendPanel}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: '#38bdf8', marginBottom: 6 }}>
+                LEYENDA DEL MAPA
+              </Text>
+              {[
+                { label: 'Base de operaciones', desc: 'Punto de partida', color: '#38bdf8' },
+                { label: 'Rover / D415', desc: 'Plataforma sensorizada', color: '#f59e0b' },
+                { label: 'Astronauta EVA-01', desc: 'Posición actual en tiempo real', color: '#38bdf8' },
+                { label: 'Objetivo de navegación', desc: 'Destino fijado', color: '#f59e0b' },
+                { label: 'Parada científica', desc: 'Puntos de muestreo', color: '#38bdf8' },
+                { label: 'Obstáculo o cráter', desc: 'Depresión o terreno de riesgo', color: '#ef4444' },
+              ].map((item, idx) => (
+                <View
+                  key={idx}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 4,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: item.color,
+                    }}
+                  />
+                  <View>
+                    <Text style={{ fontSize: 9.5, color: '#f1f5f9', fontWeight: '600' }}>
+                      {item.label}
+                    </Text>
+                    <Text style={{ fontSize: 8, color: '#94a3b8' }}>{item.desc}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Botones superiores derechos: PARADAS CIENTÍFICAS y CAPAS (Reemplaza la brújula anterior) */}
+          <View style={styles.topRightControlsRow}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowStopsPanel(!showStopsPanel);
+                setShowLayersPanel(false);
+                setShowLegend(false);
+              }}
+              style={styles.stopsBtn}
+            >
+              <View style={styles.stopsBadgeDot} />
+              <Text style={styles.stopsBtnText}>
+                PARADAS ({stops.length}/4) {showStopsPanel ? '▲' : '▼'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowLayersPanel(!showLayersPanel);
+                setShowStopsPanel(false);
+                setShowLegend(false);
+              }}
+              style={styles.layersBtn}
+            >
+              <Text style={styles.layersBtnText}>CAPAS {showLayersPanel ? '▲' : '▼'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Panel de Paradas Científicas Desplegable */}
+          {showStopsPanel && (
+            <View style={styles.stopsPanel}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                  paddingBottom: 6,
+                  borderBottomWidth: 1,
+                  borderBottomColor: 'rgba(56, 189, 248, 0.25)',
+                }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#38bdf8', letterSpacing: 0.5 }}>
+                  PARADAS CIENTÍFICAS
+                </Text>
+                <Text style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'monospace' }}>
+                  {stops.length}/4 MÁX
+                </Text>
+              </View>
+
+              {/* Botón para fijar parada en destino actual */}
+              <TouchableOpacity
+                onPress={addStopAtCurrentTarget}
+                disabled={stops.length >= 4}
+                style={{
+                  backgroundColor: stops.length >= 4 ? '#1e293b' : 'rgba(14, 116, 144, 0.45)',
+                  borderWidth: 1,
+                  borderColor: stops.length >= 4 ? '#334155' : '#38bdf8',
+                  borderRadius: 5,
+                  paddingVertical: 6,
+                  paddingHorizontal: 8,
+                  alignItems: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: '700', color: stops.length >= 4 ? '#64748b' : '#f0f9ff' }}>
+                  + FIJAR PARADA EN DESTINO
+                </Text>
+              </TouchableOpacity>
+
+              {/* Lista de paradas actuales */}
+              {stops.length === 0 ? (
+                <Text style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', paddingVertical: 4 }}>
+                  Sin paradas. Toca el botón superior o mantén presionado el mapa.
+                </Text>
+              ) : (
+                <View style={{ gap: 6 }}>
+                  {stops.map((st) => (
+                    <View
+                      key={st.id}
+                      style={{
+                        backgroundColor: '#0c1524',
+                        borderWidth: 1,
+                        borderColor: '#1e3a5f',
+                        borderRadius: 5,
+                        padding: 6,
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <View style={{ flex: 1, marginRight: 6 }}>
+                        <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#7dd3fc' }}>
+                          #{st.number} · {st.name}
+                        </Text>
+                        <Text style={{ fontSize: 8.5, color: '#94a3b8' }} numberOfLines={1}>
+                          {st.objective}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setStops(stops.filter((s) => s.id !== st.id))}
+                        style={{
+                          backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                          borderWidth: 0.8,
+                          borderColor: '#ef4444',
+                          borderRadius: 4,
+                          paddingHorizontal: 6,
+                          paddingVertical: 3,
+                        }}
+                      >
+                        <Text style={{ fontSize: 8.5, color: '#f87171', fontWeight: 'bold' }}>X</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+
+                  {stops.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => setStops([])}
+                      style={{
+                        alignItems: 'center',
+                        paddingVertical: 4,
+                        marginTop: 2,
+                      }}
+                    >
+                      <Text style={{ fontSize: 9, color: '#ef4444', textDecorationLine: 'underline' }}>
+                        Limpiar todas las paradas
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Panel de Capas Desplegable */}
+          {showLayersPanel && (
+            <View style={styles.layersPanel}>
+              {[
+                {
+                  label: 'Cráteres detectados',
+                  checked: showCraters,
+                  onChange: () => setShowCraters(!showCraters),
+                  count: obstacles.filter((o) => o.detector === 'HoughCircles').length,
+                },
+                {
+                  label: 'Escarpes geológicos',
+                  checked: showEscarpments,
+                  onChange: () => setShowEscarpments(!showEscarpments),
+                  count: DEFAULT_MARS_ESCARPMENTS.length,
+                },
+                {
+                  label: 'Curvas de nivel',
+                  checked: showContourLines,
+                  onChange: () => setShowContourLines(!showContourLines),
+                },
+                {
+                  label: 'Cuadrícula métrica',
+                  checked: showMetricGrid,
+                  onChange: () => setShowMetricGrid(!showMetricGrid),
+                },
+              ].map((row, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  onPress={row.onChange}
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                    <View
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: 3,
+                        borderWidth: 1,
+                        borderColor: row.checked ? '#38bdf8' : '#475569',
+                        backgroundColor: row.checked ? '#38bdf8' : 'transparent',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {row.checked && (
+                        <View
+                          style={{
+                            width: 6,
+                            height: 6,
+                            backgroundColor: '#080a0f',
+                            borderRadius: 1,
+                          }}
+                        />
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 10.5, color: '#e2e8f0' }}>{row.label}</Text>
+                  </View>
+                  {row.count !== undefined && (
+                    <Text style={{ fontSize: 9.5, color: '#64748b', fontFamily: 'monospace' }}>
+                      {String(row.count).padStart(2, '0')}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Controles de Zoom verticales derechos */}
+          <View style={styles.zoomControlsBox}>
+            <TouchableOpacity
+              onPress={() => setZoomScale((prev) => Math.min(2.5, Number((prev + 0.25).toFixed(2))))}
+              style={styles.zoomBtn}
+            >
+              <Text style={styles.zoomBtnText}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setZoomScale((prev) => Math.max(0.75, Number((prev - 0.25).toFixed(2))))}
+              style={styles.zoomBtn}
+            >
+              <Text style={styles.zoomBtnText}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setZoomScale(1.0)} style={styles.zoomBtn}>
+              <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold' }}>⊙</Text>
+            </TouchableOpacity>
+          </View>
 
             {/* Botón Astronauta (Telemetría EVA-01) */}
             <TouchableOpacity
