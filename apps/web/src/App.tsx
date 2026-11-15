@@ -21,15 +21,6 @@ export default function App() {
 
   useEffect(() => {
     connectBackbone(customUrls[mode]);
-
-    fetch('/data/latest_expo_payload.json')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload) => {
-        if (payload && !getDrone()) {
-          ingestEnvelope(payload);
-        }
-      })
-      .catch(() => {});
   }, []);
 
   useEffect(() => {

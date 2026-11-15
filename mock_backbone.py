@@ -26,46 +26,9 @@ inbound_sensors = set()
 inbound_queue: asyncio.Queue = None  # Inicializada en main()
 
 
-def load_real_d415_frames():
-    """
-    Carga los frames reales de la carpeta data/ (Intel RealSense D415 - sturdy-couscous):
-    1) Prioriza data/sample_10s_d415.zip -> sample_10s_d415/frames.jsonl (22 frames con imágenes base64)
-    2) Si no, usa data/latest_expo_payload.json
-    3) Si no, usa data/latest_drone_cv.json
-    """
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(base_dir, "data")
-    frames = []
-
-    zip_path = os.path.join(data_dir, "sample_10s_d415.zip")
-    if os.path.exists(zip_path):
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                raw_lines = zf.read("sample_10s_d415/frames.jsonl").decode("utf-8").splitlines()
-                for line in raw_lines:
-                    line = line.strip()
-                    if line:
-                        frames.append(json.loads(line))
-            print(f"[Dataset D415] Cargados {len(frames)} frames reales desde data/sample_10s_d415.zip")
-        except Exception as e:
-            print(f"[WARN] Error leyendo sample_10s_d415.zip: {e}")
-
-    if not frames:
-        for fallback_name in ["latest_expo_payload.json", "latest_drone_cv.json", "drone_cv_1794682184211.json"]:
-            fpath = os.path.join(data_dir, fallback_name)
-            if os.path.exists(fpath):
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        frames.append(json.load(f))
-                    print(f"[Dataset D415] Cargado snapshot real desde data/{fallback_name}")
-                    break
-                except Exception as e:
-                    print(f"[WARN] Error leyendo {fallback_name}: {e}")
-
-    return frames
-
-
-REAL_D415_FRAMES = load_real_d415_frames()
+# Modo limpio: Sin carga inicial de frames simulados; solo se reciben y difunden paquetes reales
+REAL_D415_FRAMES = []
+CURRENT_FRAME_INDEX = 0
 CURRENT_FRAME_INDEX = 0
 
 
@@ -294,17 +257,9 @@ async def handle_outbound_client(reader, writer):
         elif path in ("/latest_expo_payload.json", "/latest_drone_cv.json", "/api/d415-latest", "/"):
             if "drone_cv" in LATEST_INGESTED_PACKETS:
                 payload_out = dict(LATEST_INGESTED_PACKETS["drone_cv"])
+                send_http_json(writer, payload_out)
             else:
-                frame = (
-                    REAL_D415_FRAMES[CURRENT_FRAME_INDEX % len(REAL_D415_FRAMES)]
-                    if REAL_D415_FRAMES
-                    else {"node": "drone_cv", "timestamp": int(time.time()), "data": {}}
-                )
-                payload_out = dict(frame)
-            payload_out["node_id"] = "drone_cv"
-            if REAL_MAP_STATE:
-                payload_out["map_state"] = REAL_MAP_STATE
-            send_http_json(writer, payload_out)
+                send_http_json(writer, {"status": "waiting_for_sensor_data", "connected": False})
         else:
             send_http_json(
                 writer,
@@ -339,16 +294,8 @@ async def handle_outbound_client(reader, writer):
     print(f"[SALIDA :{OUTBOUND_PORT}] Cliente (Web/iPad) conectado desde: {addr}")
     outbound_clients.add(writer)
 
-    if REAL_D415_FRAMES:
-        init_frame = REAL_D415_FRAMES[CURRENT_FRAME_INDEX % len(REAL_D415_FRAMES)]
-        init_packet = {
-            "node": "drone_cv",
-            "node_id": "drone_cv",
-            "timestamp": int(time.time()),
-            "data": init_frame.get("data", {}),
-            "images": init_frame.get("images"),
-            "map_state": REAL_MAP_STATE,
-        }
+    if "drone_cv" in LATEST_INGESTED_PACKETS:
+        init_packet = dict(LATEST_INGESTED_PACKETS["drone_cv"])
         try:
             writer.write(create_ws_frame(json.dumps(init_packet)))
             await writer.drain()
