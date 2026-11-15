@@ -136,6 +136,11 @@ def broadcast_to_outbound(packet: dict):
     """Envía un paquete inmediatamente por el PUERTO DE SALIDA (8765) a todos los clientes Web/iPad."""
     if not outbound_clients:
         return
+    if isinstance(packet, dict):
+        node = packet.get("node") or packet.get("node_id")
+        if node == "drone_cv":
+            if "map_state" not in packet and REAL_MAP_STATE:
+                packet["map_state"] = REAL_MAP_STATE
     frame = create_ws_frame(json.dumps(packet))
     for client in list(outbound_clients):
         try:
@@ -296,6 +301,21 @@ async def handle_outbound_client(reader, writer):
 
     if "drone_cv" in LATEST_INGESTED_PACKETS:
         init_packet = dict(LATEST_INGESTED_PACKETS["drone_cv"])
+        if "map_state" not in init_packet and REAL_MAP_STATE:
+            init_packet["map_state"] = REAL_MAP_STATE
+        try:
+            writer.write(create_ws_frame(json.dumps(init_packet)))
+            await writer.drain()
+        except Exception:
+            pass
+    elif REAL_MAP_STATE:
+        init_packet = {
+            "node": "drone_cv",
+            "node_id": "drone_cv",
+            "timestamp": int(time.time()),
+            "map_state": REAL_MAP_STATE,
+            "data": {},
+        }
         try:
             writer.write(create_ws_frame(json.dumps(init_packet)))
             await writer.drain()
@@ -494,6 +514,10 @@ async def inbound_relay_worker():
     """Consume los paquetes que llegan al puerto 8766 y los retransmite al puerto 8765 sin bloqueo."""
     while True:
         packet = await inbound_queue.get()
+        if isinstance(packet, dict):
+            node_id = packet.get("node_id") or packet.get("node")
+            if node_id == "drone_cv" and "map_state" not in packet and REAL_MAP_STATE:
+                packet["map_state"] = REAL_MAP_STATE
         broadcast_to_outbound(packet)
         inbound_queue.task_done()
 

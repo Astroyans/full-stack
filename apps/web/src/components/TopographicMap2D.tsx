@@ -813,6 +813,40 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
 
   const [mapLayerMode, setMapLayerMode] = useState<MapLayerMode>('fusion_mars_d415');
   const [imageSrc, setImageSrc] = useState<string>('/mars-terrain.jpg');
+  const liveImgRef = useRef<HTMLImageElement | null>(null);
+  const [liveImageVersion, setLiveImageVersion] = useState<number>(0);
+
+  // Cargar dinámicamente imágenes Base64 de la cámara D415 (route_map / rgb / depth)
+  // para proyectarlas como fondo en el lienzo principal cuando el operador activa la capa en vivo.
+  useEffect(() => {
+    let srcToLoad: string | null = null;
+    if (mapLayerMode === 'live_route_map' || mapLayerMode === 'live_server_cam') {
+      srcToLoad = droneData?.images?.route_map ?? null;
+    } else if (mapLayerMode === 'live_rgb') {
+      srcToLoad = droneData?.images?.rgb ?? null;
+    } else if (mapLayerMode === 'live_depth') {
+      srcToLoad = droneData?.images?.depth ?? null;
+    }
+
+    if (!srcToLoad) {
+      liveImgRef.current = null;
+      setLiveImageVersion((v) => v + 1);
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = srcToLoad.startsWith('data:') ? srcToLoad : `data:image/jpeg;base64,${srcToLoad}`;
+    img.onload = () => {
+      liveImgRef.current = img;
+      setLiveImageVersion((v) => v + 1);
+    };
+  }, [
+    mapLayerMode,
+    droneData?.images?.route_map,
+    droneData?.images?.rgb,
+    droneData?.images?.depth,
+  ]);
 
   const [baseVisionData, setBaseVisionData] = useState<ImageVisionAnalysis | null>(null);
   const [localMapState, setLocalMapState] = useState<RealMapStatePayload | null>(null);
@@ -1154,6 +1188,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
       activeMapState,
       droneData,
       loadedImg: loadedImgRef.current,
+      liveImg: liveImgRef.current,
       mapLayerMode,
       showContours,
       showDetectedZones,
@@ -1184,6 +1219,7 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
     stops,
     zoomScale,
     bgCropFraction,
+    liveImageVersion,
   ]);
 
   // Convierte la posición del mouse/clic en el canvas a las mismas "unidades" (0..10)
@@ -2080,6 +2116,97 @@ export const TopographicMap2D: React.FC<TopographicMap2DProps> = ({
                 </span>
               </div>
             )}
+
+            {/* Selector Táctico de Capas: Orbital vs Route Map vs RGB vs Grid */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '12px',
+                right: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(9, 17, 30, 0.92)',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                borderRadius: '6px',
+                padding: '3px 6px',
+                zIndex: 9,
+                boxShadow: '0 4px 14px rgba(0, 0, 0, 0.6)',
+                backdropFilter: 'blur(4px)',
+                fontSize: '10px',
+                fontFamily: '"SF Mono", "JetBrains Mono", Consolas, monospace',
+              }}
+            >
+              <span style={{ color: '#64748b', marginRight: '4px', fontWeight: 600 }}>FONDO:</span>
+              <button
+                onClick={() => setMapLayerMode('fusion_mars_d415')}
+                style={{
+                  background: mapLayerMode === 'fusion_mars_d415' ? '#0284c7' : 'transparent',
+                  border: 'none',
+                  color: mapLayerMode === 'fusion_mars_d415' ? '#ffffff' : '#94a3b8',
+                  borderRadius: '4px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                ORBITAL
+              </button>
+              <button
+                onClick={() => setMapLayerMode('live_route_map')}
+                style={{
+                  background: mapLayerMode === 'live_route_map' ? '#0284c7' : 'transparent',
+                  border: 'none',
+                  color: mapLayerMode === 'live_route_map' ? '#ffffff' : '#94a3b8',
+                  borderRadius: '4px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                {droneData?.images?.route_map && (
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                )}
+                ROUTE MAP (VIVO)
+              </button>
+              <button
+                onClick={() => setMapLayerMode('live_rgb')}
+                style={{
+                  background: mapLayerMode === 'live_rgb' ? '#0284c7' : 'transparent',
+                  border: 'none',
+                  color: mapLayerMode === 'live_rgb' ? '#ffffff' : '#94a3b8',
+                  borderRadius: '4px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                {droneData?.images?.rgb && (
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                )}
+                RGB D415 (VIVO)
+              </button>
+              <button
+                onClick={() => setMapLayerMode('pure_d415_grid')}
+                style={{
+                  background: mapLayerMode === 'pure_d415_grid' ? '#0284c7' : 'transparent',
+                  border: 'none',
+                  color: mapLayerMode === 'pure_d415_grid' ? '#ffffff' : '#94a3b8',
+                  borderRadius: '4px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                GRID D415
+              </button>
+            </div>
 
             <canvas
               ref={canvasRef}
